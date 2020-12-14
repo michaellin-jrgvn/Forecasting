@@ -1,14 +1,3 @@
-# Install Libraries (This may need to be done first each time the notebook is used here.  Takes a few minutes to install)
-from IPython.display import clear_output
-try:
-  !pip install pystan
-  !pip install fbprophet
-except:
-  pass
-finally:
-  clear_output()
-  print('All Loaded')
-
 import streamlit as st
 import pandas as pd
 import numpy as np
