@@ -10,7 +10,7 @@ base58==2.0.1
 bleach
 blinker==1.4
 cachetools==4.1.1
-certifi==2020.6.20-l
+certifi==2020.6.20
 cffi
 cftime
 chardet==3.0.4
