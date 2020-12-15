@@ -117,7 +117,6 @@ def fit_model(df, store_code, holidays, channel):
     m.add_seasonality('saturday', period=1, prior_scale=5, fourier_order=10, mode='multiplicative', condition_name='is_saturday')
 
     # Preprocess data
-    print('Preprocess data...')
     if channel != 'all':
         df_test = df[(df.store_code == store_code) & (df.channel == channel)][['datetime','bill_size']]
     else:
@@ -269,7 +268,7 @@ if st.sidebar.button('Generate Forecast'):
                 print('fitting shop code: ', code, i+1, '/96 stores')
                 m = fit_model(df, code, holidays, 'all')
                 m_list[code] = m
-                print(m_list)
+                # print(m_list)
                 forecast = predict_model(m, forecast_start_date,forecast_end_date, 'H')
                 shop_yhat = forecast[['ds','yhat']]
                 shop_yhat = shop_yhat.rename(columns={'yhat': code})
