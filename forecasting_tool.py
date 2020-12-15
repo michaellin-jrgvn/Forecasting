@@ -208,7 +208,7 @@ def predict_model(m, start,end, freq):
 # Read Dataset
 @st.cache
 def read_file(store_code):
-    df = pd.read_csv(store_code + '.csv')
+    df = pd.read_csv('./data/' + store_code + '.csv')
     return df
 
 st.set_page_config(
@@ -221,6 +221,8 @@ st.set_page_config(
 st.title('Project CrystalBallz :crystal_ball:')
 st.write('Project CrystalBallz helps you to see through the future. 2018-2020 data will be fitted to a forecasting algorithm to generate insight. Toggle the sidebar and follow the steps to generate forecast you need.')
 
+df_display = read_file('D112').set_index('datetime')
+st.write(df_display)
 st.sidebar.write('latest date of the current data set: ', pd.to_datetime(df_display.index[-1], format='%Y/%m/%d'))
 st.sidebar.write('Please update your dataset if the data is not up-to-date.')
 
@@ -235,7 +237,7 @@ st.sidebar.subheader('2️⃣ - Select Stores:')
 
 @st.cache
 def store_code():
-    store_codes = [".".join(f.split(".")[:-1]) for f in os.listdir('./Data/') if os.path.isfile(f)]
+    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
     return store_codes
 
 store_code_func = store_code()
