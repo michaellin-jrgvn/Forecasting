@@ -222,7 +222,6 @@ st.title('Project CrystalBallz :crystal_ball:')
 st.write('Project CrystalBallz helps you to see through the future. 2018-2020 data will be fitted to a forecasting algorithm to generate insight. Toggle the sidebar and follow the steps to generate forecast you need.')
 
 df_display = read_file('D112').set_index('datetime')
-st.write(df_display)
 st.sidebar.write('latest date of the current data set: ', pd.to_datetime(df_display.index[-1], format='%Y/%m/%d'))
 st.sidebar.write('Please update your dataset if the data is not up-to-date.')
 
