@@ -4,6 +4,7 @@ import numpy as np
 import datetime
 import base64
 from io import BytesIO
+import os
 
 from fbprophet import Prophet
 from fbprophet.plot import plot_plotly, plot_components_plotly
@@ -206,8 +207,8 @@ def predict_model(m, start,end, freq):
 
 # Read Dataset
 @st.cache
-def read_file():
-    df = pd.read_csv('df_1820_1.csv')
+def read_file(store_code):
+    df = pd.read_csv(store_code + '.csv')
     return df
 
 st.set_page_config(
@@ -219,9 +220,6 @@ st.set_page_config(
 
 st.title('Project CrystalBallz :crystal_ball:')
 st.write('Project CrystalBallz helps you to see through the future. 2018-2020 data will be fitted to a forecasting algorithm to generate insight. Toggle the sidebar and follow the steps to generate forecast you need.')
-
-df = read_file()
-df_display = df.set_index('datetime')
 
 st.sidebar.write('latest date of the current data set: ', pd.to_datetime(df_display.index[-1], format='%Y/%m/%d'))
 st.sidebar.write('Please update your dataset if the data is not up-to-date.')
@@ -236,17 +234,11 @@ if forecast_start_date > forecast_end_date:
 st.sidebar.subheader('2️⃣ - Select Stores:')
 
 @st.cache
-def store_code(df):
-    latest_store_list = df.store_code.unique().tolist()
-    # Delete stores that has been closed down in 2020 that shouldn't exsit in Oct onwards
-    store_del = ['E116','E117','E701','E120','D915']
-    for s in store_del:
-        latest_store_list.remove(s)
-    # latest_store_list.extend(['D932','D423']) # Add Mia and Midori back to the list
-    latest_store_list.sort()
-    return latest_store_list
+def store_code():
+    store_codes = [".".join(f.split(".")[:-1]) for f in os.listdir('./Data/') if os.path.isfile(f)]
+    return store_codes
 
-store_code_func = store_code(df)
+store_code_func = store_code()
 
 store_select_option = st.sidebar.radio("Select options:", ('Individual/Multiple Stores', 'All Stores'))
 if store_select_option == 'All Stores':
@@ -266,6 +258,7 @@ if st.sidebar.button('Generate Forecast'):
         with st.spinner('Wait for it...'):
             for i, code in enumerate(store_code):
                 print('fitting shop code: ', code, i+1, '/96 stores')
+                df=read_file(code)
                 m = fit_model(df, code, holidays, 'all')
                 m_list[code] = m
                 # print(m_list)
