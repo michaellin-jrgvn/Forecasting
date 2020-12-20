@@ -164,6 +164,11 @@ def fit_model(df, store_code, holidays, channel):
     m.fit(df_hr_o)
     return m
 
+@st.cache
+def store_code():
+    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
+    return store_codes
+
 # Prophet predict function that. Prerequisite: Fitted model
 @st.cache
 def predict_model(m, start,end, freq):
@@ -233,12 +238,6 @@ if forecast_start_date > forecast_end_date:
     st.sidebar.write('Warning: Forecast start date cannot be the same or later than the end date.')
 
 st.sidebar.subheader('2️⃣ - Select Stores:')
-
-@st.cache
-def store_code():
-    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
-    return store_codes
-
 store_code_func = store_code()
 
 store_select_option = st.sidebar.radio("Select options:", ('Individual/Multiple Stores', 'All Stores'))
