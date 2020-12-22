@@ -271,15 +271,19 @@ if st.sidebar.button('Generate Forecast'):
         final = pd.DataFrame()
         with st.spinner('Wait for it...'):
             for i, code in enumerate(store_code):
-                print('fitting shop code: ', code, i+1, '/96 stores')
-                df=read_file(code)
-                m = fit_model(df, code, holidays, 'all')
-                m_list[code] = m
-                # print(m_list)
-                forecast = predict_model(m, forecast_start_date,forecast_end_date, 'H')
-                shop_yhat = forecast[['ds','yhat']]
-                shop_yhat = shop_yhat.rename(columns={'yhat': code})
-                final = pd.merge(final, shop_yhat.set_index('ds'), how='outer', left_index=True, right_index=True)
+                try:
+                    print('fitting shop code: ', code, i+1, '/96 stores')
+                    df=read_file(code)
+                    m = fit_model(df, code, holidays, 'all')
+                    m_list[code] = m
+                    # print(m_list)
+                    forecast = predict_model(m, forecast_start_date,forecast_end_date, 'H')
+                    shop_yhat = forecast[['ds','yhat']]
+                    shop_yhat = shop_yhat.rename(columns={'yhat': code})
+                    final = pd.merge(final, shop_yhat.set_index('ds'), how='outer', left_index=True, right_index=True)
+                except:
+                    st.warning('No data is available for ' + store_code)
+                    pass
         return final
 
     final = fit_pred_model(store_code)
