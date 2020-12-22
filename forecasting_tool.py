@@ -166,8 +166,15 @@ def fit_model(df, store_code, holidays, channel):
 
 @st.cache
 def store_code():
-    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
-    return store_codes
+    df = pd.read_excel('./data/Tracking store by year.xls', nrows=100,usecols=['Store Code','Store', 'AC', 'Region','Province','Concept','Opening Date'],parse_dates=['Opening Date'])
+    df['full_name'] = df['Store Code'] + '-' + df['Store']
+    return df
+
+
+#@st.cache
+#def store_code():
+#    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
+#    return store_codes
 
 # Prophet predict function that. Prerequisite: Fitted model
 @st.cache
@@ -240,12 +247,19 @@ if forecast_start_date > forecast_end_date:
 st.sidebar.subheader('2️⃣ - Select Stores:')
 store_code_func = store_code()
 
-store_select_option = st.sidebar.radio("Select options:", ('Individual/Multiple Stores', 'All Stores'))
+store_select_option = st.sidebar.radio("Select options:", ('by Individual/Multiple Stores','by AC','by Region','All Stores'))
 if store_select_option == 'All Stores':
     st.sidebar.warning('⚡ The time requires to forecast all store could take up to 3 hours')
     store_code = store_code_func
-else:
-    store_code = st.sidebar.multiselect('Select store code to be forecasted:', store_code_func)
+elif store_select_option == 'by Individual/Multiple Stores':
+    store_selected = st.sidebar.multiselect('Select store code to be forecasted:', store_code_func['full_name'])
+    store_code = store_code_func[store_code_func['full_name'].isin(store_selected)]['Store Code']
+elif store_select_option == 'by AC':
+    ac_selected = st.sidebar.multiselect('Select AC area to be forecasted:', store_code_func['AC'].unique())
+    store_code = store_code_func[store_code_func['AC'].isin(ac_selected)]['Store Code']
+elif store_select_option == 'by Region':
+    region_selected = st.sidebar.selectbox('Select the region to be forecasted:', store_code_func['Region'].unique())
+    store_code = store_code_func[store_code_func['Region']== region_selected]['Store Code']
 
 st.sidebar.subheader("3️⃣ - Ready for magic 🍄?")
 if st.sidebar.button('Generate Forecast'):
@@ -273,7 +287,7 @@ if st.sidebar.button('Generate Forecast'):
     st.plotly_chart(fig, use_container_width=True)
     st.balloons()
 
-    st.dataframe(final)
+    st.dataframe(final.T)
 
     def to_excel(df):
 
