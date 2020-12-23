@@ -179,9 +179,10 @@ def store_code():
 # Prophet predict function that. Prerequisite: Fitted model
 @st.cache
 def predict_model(m, start,end, freq):
-
+    st.write(start, end)
     future = pd.DataFrame({'ds': pd.date_range(start=start, end=end, freq=freq)})
     future_o = future[(future['ds'].dt.hour > 9) & (future['ds'].dt.hour < 22)]
+    st.write(future_o)
 
     # define seasonality
     def is_sunday(ds):
@@ -239,7 +240,7 @@ st.sidebar.write('Please update your dataset if the data is not up-to-date.')
 
 st.sidebar.subheader('1️⃣ - Forecast Date Range:')
 forecast_start_date = st.sidebar.date_input('From:')
-forecast_end_date = st.sidebar.date_input('To:') + + datetime.timedelta(days=1)
+forecast_end_date = st.sidebar.date_input('To:') + datetime.timedelta(days=1)
 
 if forecast_start_date > forecast_end_date:
     st.sidebar.write('Warning: Forecast start date cannot be the same or later than the end date.')
