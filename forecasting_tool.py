@@ -278,6 +278,7 @@ if st.sidebar.button('Generate Forecast'):
                     m_list[code] = m
                     # print(m_list)
                     forecast = predict_model(m, forecast_start_date,forecast_end_date, 'H')
+                    st.write(forecast.head())
                     shop_yhat = forecast[['ds','yhat']]
                     shop_yhat = shop_yhat.rename(columns={'yhat': code})
                     final = pd.merge(final, shop_yhat.set_index('ds'), how='outer', left_index=True, right_index=True)
@@ -290,6 +291,7 @@ if st.sidebar.button('Generate Forecast'):
     fig = px.bar(final, x=final.index, y=final.columns)
     st.plotly_chart(fig, use_container_width=True)
     st.balloons()
+    st.write(final.T)
 
     st.dataframe(final.T)
 
