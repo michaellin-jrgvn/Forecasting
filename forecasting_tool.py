@@ -181,6 +181,7 @@ def store_code():
 def predict_model(m, start,end, freq):
     st.write(start, end)
     future = pd.DataFrame({'ds': pd.date_range(start=start, end=end, freq=freq)})
+    st.write(future)
     future_o = future[(future['ds'].dt.hour > 9) & (future['ds'].dt.hour < 22)]
     st.write(future_o)
 
@@ -294,7 +295,7 @@ if st.sidebar.button('Generate Forecast'):
     st.balloons()
     st.write(final.T)
 
-    st.dataframe(final.T)
+    st.dataframe(final)
 
     def to_excel(df):
 
