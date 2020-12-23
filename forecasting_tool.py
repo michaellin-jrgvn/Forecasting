@@ -293,9 +293,11 @@ if st.sidebar.button('Generate Forecast'):
     fig = px.bar(final, x=final.index, y=final.columns)
     st.plotly_chart(fig, use_container_width=True)
     st.balloons()
-    st.write(final.T)
-
-    st.dataframe(final)
+  
+    final_display = final
+    st.write(final_display)
+    final_display.index.strftime("%Y/%m/%d hh:mm:ss")
+    st.dataframe(final_display)
 
     def to_excel(df):
 
