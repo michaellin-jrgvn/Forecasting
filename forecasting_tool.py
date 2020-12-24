@@ -296,7 +296,7 @@ if st.sidebar.button('Generate Forecast'):
   
     final_display = final
     st.write(final_display)
-    final_display.index.strftime("%Y/%m/%d hh:mm:ss")
+    final_display.index = final_display.index.strftime("%Y-%m-%d %H:%M")
     st.dataframe(final_display)
 
     def to_excel(df):
