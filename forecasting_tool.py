@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import datetime
+import datetime 
 import base64
 from io import BytesIO
 import os
@@ -294,10 +294,10 @@ if st.sidebar.button('Generate Forecast'):
     st.plotly_chart(fig, use_container_width=True)
     st.balloons()
   
-    final_display = final
+    final_display = final.reset_index()
+    final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
     st.write(final_display)
-    final_display.index = final_display.index.strftime("%Y-%m-%d %H:%M")
-    st.dataframe(final_display)
+    st.write(final_display.dtypes)
 
     def to_excel(df):
 
