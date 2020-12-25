@@ -179,11 +179,8 @@ def store_code():
 # Prophet predict function that. Prerequisite: Fitted model
 @st.cache
 def predict_model(m, start,end, freq):
-    st.write(start, end)
     future = pd.DataFrame({'ds': pd.date_range(start=start, end=end, freq=freq)})
-    st.write(future)
     future_o = future[(future['ds'].dt.hour > 9) & (future['ds'].dt.hour < 22)]
-    st.write(future_o)
 
     # define seasonality
     def is_sunday(ds):
@@ -232,8 +229,8 @@ st.set_page_config(
      initial_sidebar_state="expanded",
 )
 
-st.title('Project CrystalBallz :crystal_ball:')
-st.write('Project CrystalBallz helps you to see through the future. 2018-2020 data will be fitted to a forecasting algorithm to generate insight. Toggle the sidebar and follow the steps to generate forecast you need.')
+#st.title('Project CrystalBallz :crystal_ball:')
+#st.write('Project CrystalBallz helps you to see through the future. 2018-2020 data will be fitted to a forecasting algorithm to generate insight. Toggle the sidebar and follow the steps to generate forecast you need.')
 
 df_display = read_file('D112').set_index('datetime')
 st.sidebar.write('latest date of the current data set: ', pd.to_datetime(df_display.index[-1], format='%Y/%m/%d'))
@@ -280,7 +277,6 @@ if st.sidebar.button('Generate Forecast'):
                     m_list[code] = m
                     # print(m_list)
                     forecast = predict_model(m, forecast_start_date,forecast_end_date, 'H')
-                    st.write(forecast.head())
                     shop_yhat = forecast[['ds','yhat']]
                     shop_yhat = shop_yhat.rename(columns={'yhat': code})
                     final = pd.merge(final, shop_yhat.set_index('ds'), how='outer', left_index=True, right_index=True)
@@ -293,11 +289,13 @@ if st.sidebar.button('Generate Forecast'):
     fig = px.bar(final, x=final.index, y=final.columns)
     st.plotly_chart(fig, use_container_width=True)
     st.balloons()
-  
+    
+    # Streamlit is current having a bug to convert datetime to the timezone of the server. 
+    # So, it is advised to convert datetime to string to display the time correctly
     final_display = final.reset_index()
     final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
-    st.write(final_display)
-    st.write(final_display.dtypes)
+    final_display = final_display.set_index('ds')
+    st.dataframe(final_display.T)
 
     def to_excel(df):
 
