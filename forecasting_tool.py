@@ -10,6 +10,9 @@ from fbprophet import Prophet
 from fbprophet.plot import plot_plotly, plot_components_plotly
 
 import plotly.express as px
+import plotly.graph_objects as go
+
+
 
 # Define holidays and events
 tet_holiday_2021 = pd.DataFrame({
@@ -170,7 +173,6 @@ def store_code():
     df['full_name'] = df['Store Code'] + '-' + df['Store']
     return df
 
-
 #@st.cache
 #def store_code():
 #    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
@@ -216,10 +218,15 @@ def predict_model(m, start,end, freq):
     forecast = m.predict(future_o)
     return forecast
 
+@st.cache
+def keep_df(df):
+    keep_df = df
+    return keep_df
+
 # Read Dataset
 @st.cache
 def read_file(store_code):
-    df = pd.read_csv('./data/' + store_code + '.csv')
+    df = pd.read_csv('./data/' + store_code + '.csv', parse_dates=['datetime'])
     return df
 
 st.set_page_config(
@@ -232,40 +239,40 @@ st.set_page_config(
 #st.title('Project CrystalBallz :crystal_ball:')
 #st.write('Project CrystalBallz helps you to see through the future. 2018-2020 data will be fitted to a forecasting algorithm to generate insight. Toggle the sidebar and follow the steps to generate forecast you need.')
 
+
 df_display = read_file('D112').set_index('datetime')
-st.sidebar.write('latest date of the current data set: ', pd.to_datetime(df_display.index[-1], format='%Y/%m/%d'))
+st.sidebar.write('Latest date of the current data set: ', pd.to_datetime(df_display.index[-1], format='%Y/%m/%d'))
 st.sidebar.write('Please update your dataset if the data is not up-to-date.')
 
-st.sidebar.subheader('1️⃣ - Forecast Date Range:')
-forecast_start_date = st.sidebar.date_input('From:')
-forecast_end_date = st.sidebar.date_input('To:') + datetime.timedelta(days=1)
 
-if forecast_start_date > forecast_end_date:
-    st.sidebar.write('Warning: Forecast start date cannot be the same or later than the end date.')
+# Expander - Forecast Generation Setting
+with st.sidebar.beta_expander("Forecast Generator Setting"):
 
-st.sidebar.subheader('2️⃣ - Select Stores:')
-store_code_func = store_code()
+    store_code_func = store_code()
 
-store_select_option = st.sidebar.radio("Select options:", ('by Individual/Multiple Stores','by AC','by Region','All Stores'))
-if store_select_option == 'All Stores':
-    st.sidebar.warning('⚡ The time requires to forecast all store could take up to 3 hours')
-    store_code = store_code_func
-elif store_select_option == 'by Individual/Multiple Stores':
-    store_selected = st.sidebar.multiselect('Select store code to be forecasted:', store_code_func['full_name'])
-    store_code = store_code_func[store_code_func['full_name'].isin(store_selected)]['Store Code']
-elif store_select_option == 'by AC':
-    ac_selected = st.sidebar.multiselect('Select AC area to be forecasted:', store_code_func['AC'].unique())
-    store_code = store_code_func[store_code_func['AC'].isin(ac_selected)]['Store Code']
-elif store_select_option == 'by Region':
-    region_selected = st.sidebar.selectbox('Select the region to be forecasted:', store_code_func['Region'].unique())
-    store_code = store_code_func[store_code_func['Region']== region_selected]['Store Code']
+    store_select_option = st.radio('1️⃣ - Select Stores:', ('by Individual/Multiple Stores','by AC','by Region','All Stores'))
+    if store_select_option == 'All Stores':
+        st.warning('⚡ The time requires to forecast all store could take up to 3 hours')
+        store_code = store_code_func
+    elif store_select_option == 'by Individual/Multiple Stores':
+        store_selected = st.multiselect('Select store code to be forecasted:', store_code_func['full_name'])
+        store_code = store_code_func[store_code_func['full_name'].isin(store_selected)]['Store Code']
+    elif store_select_option == 'by AC':
+        ac_selected = st.multiselect('Select AC area to be forecasted:', store_code_func['AC'].unique())
+        store_code = store_code_func[store_code_func['AC'].isin(ac_selected)]['Store Code']
+    elif store_select_option == 'by Region':
+        region_selected = st.selectbox('Select the region to be forecasted:', store_code_func['Region'].unique())
+        store_code = store_code_func[store_code_func['Region']== region_selected]['Store Code']
 
-st.sidebar.subheader("3️⃣ - Ready for magic 🍄?")
-if st.sidebar.button('Generate Forecast'):
-    st.write('Inspect and check your data in both tabular and graphical formats')
+    start_date = datetime.date.today()
+    end_date = datetime.date.today() + datetime.timedelta(days=1)
+    forecast_date_range = st.date_input('2️⃣ - Forecast Date Range:', value=(start_date, end_date))
+    
+    st.subheader("3️⃣ - Ready for magic 🍄?")
 
     @st.cache(suppress_st_warning=True)
     def fit_pred_model(store_code):
+        ''' Fit and predict model in a for loop '''
         m_list = {}
         final = pd.DataFrame()
         with st.spinner('Wait for it...'):
@@ -275,27 +282,64 @@ if st.sidebar.button('Generate Forecast'):
                     df=read_file(code)
                     m = fit_model(df, code, holidays, 'all')
                     m_list[code] = m
-                    # print(m_list)
-                    forecast = predict_model(m, forecast_start_date,forecast_end_date, 'H')
+                    forecast = predict_model(m, forecast_date_range[0],forecast_date_range[1], 'H')
                     shop_yhat = forecast[['ds','yhat']]
                     shop_yhat = shop_yhat.rename(columns={'yhat': code})
                     final = pd.merge(final, shop_yhat.set_index('ds'), how='outer', left_index=True, right_index=True)
                 except:
                     st.warning('No data is available for ' + store_code)
                     pass
+        st.balloons()
         return final
 
     final = fit_pred_model(store_code)
-    fig = px.bar(final, x=final.index, y=final.columns)
-    st.plotly_chart(fig, use_container_width=True)
-    st.balloons()
+
+if len(final) > 0:
+    # Expander - Forecast Filter and Fine tune
+    with st.sidebar.beta_expander("Forecast Filter and Fintuning", expanded=True):
+        compare_yoy = st.checkbox('Compare Last Year')
+        min_value = final.index.min().to_pydatetime()
+        max_value = final.index.max().to_pydatetime()
+        test = st.slider(label='finetuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
+        st.sidebar.write(test)
     
-    # Streamlit is current having a bug to convert datetime to the timezone of the server. 
-    # So, it is advised to convert datetime to string to display the time correctly
-    final_display = final.reset_index()
-    final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
-    final_display = final_display.set_index('ds')
-    st.dataframe(final_display.T)
+    st.title('Generated Forecast')
+    # Select box to display data rsampled by Hour, Day, Week, and Month
+    resample_data =[['Hour','H'],['Day','D'],['Week','W'],['Month','M']]
+    resample_df = pd.DataFrame(resample_data, columns=['name','id'])
+    resample_values = resample_df['name'].tolist()
+    resample_id = resample_df['id'].tolist()
+    dic = dict(zip(resample_id,resample_values))
+    data_resample_option = st.selectbox('Data resample by:',resample_id,format_func=lambda x:dic[x])
+    final_edit = final.resample(data_resample_option).sum()
+
+    col1, col2 = st.beta_columns([1, 3])
+    with col1:
+        st.header('Statistical Description')
+        st.write(final.describe())
+    with col2:
+        st.header('Details')
+        # Streamlit is current having a bug to convert datetime to the timezone of the server. 
+        # So, it is advised to convert datetime to string to display the time correctly
+        final_display = final.reset_index()
+        final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
+        final_display = final_display.set_index('ds')
+        st.dataframe(final_display.T)
+
+    if compare_yoy:
+        plot = read_file(store_code[0])
+        plot = plot.set_index('datetime')
+        ly_range = (forecast_date_range[0] + pd.offsets.DateOffset(years=-1), forecast_date_range[1] + pd.offsets.DateOffset(years=-1))
+        ly_data = plot.loc[ly_range[0]:ly_range[1],'bill_size']
+        ly_data = ly_data.resample(data_resample_option).sum()
+        fig = px.line(final_edit, x=final_edit.index, y=final_edit.columns)
+        fig.add_trace(go.Scatter(x=final_edit.index, y=ly_data))
+        # st.plotly_chart(compare_fig, use_container_width=True)
+    else:
+        fig = px.line(final_edit, x=final_edit.index, y=final_edit.columns)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    keep_df(final)
 
     def to_excel(df):
 
@@ -332,6 +376,6 @@ if st.sidebar.button('Generate Forecast'):
         b64 = base64.b64encode(val)  # val looks like b'...'
         return f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="extract.xlsx">Download file</a>' # decode b'abc' => abc
 
-    st.subheader('Step 4 - Download Data')
-    st.write('Click the link below to download the data for your own use:')
-    st.markdown(get_table_download_link(final), unsafe_allow_html=True)
+    st.sidebar.subheader('Download Data')
+    st.sidebar.write('Click the link below to download the data for your own use:')
+    st.sidebar.markdown(get_table_download_link(final), unsafe_allow_html=True)
