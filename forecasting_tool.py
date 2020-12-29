@@ -11,6 +11,7 @@ from fbprophet.plot import plot_plotly, plot_components_plotly
 
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 
@@ -329,9 +330,9 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
             except:
                 st.warning('No data in last month')
                 pass
-            past_2018_df['total'] = past_2018_df.sum()
-            past_2019_df['total'] = past_2019_df.sum()
-            df_lm['total'] = df_lm.sum()             
+        df_2018['total'] = df_2018.sum(axis=1)
+        df_2019['total'] = df_2019.sum(axis=1)
+        df_lm['total'] = df_lm.sum(axis=1)             
         return df_2018, df_2019, df_lm
 
     final, df_past, forecast_by_store = fit_pred_model(store_code)
@@ -342,11 +343,10 @@ df_past = df_past.set_index('datetime')
 
     
 # Expander - Forecast Filter and Fine tune
-with st.sidebar.beta_expander("Forecast Filter and Fintuning", expanded=True):
-    compare_past = st.checkbox('Compare Last Year')
+with st.sidebar.beta_expander("Forecast Filter and Fine tuning", expanded=True):
     min_value = final.index.min().to_pydatetime()
     max_value = final.index.max().to_pydatetime()
-    test = st.slider(label='finetuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
+    test = st.slider(label='fine tuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
     st.sidebar.write(test)
 
 
@@ -360,6 +360,7 @@ if len(final) > 0:
     dic = dict(zip(resample_id,resample_values))
     data_resample_option = st.selectbox('Data resample by:',resample_id,format_func=lambda x:dic[x])
     final_edit = final.resample(data_resample_option).sum()
+    final_edit['total'] = final_edit.sum(axis=1)
 
     col1, col2, col3 = st.beta_columns([1, 1, 1])
     with col1:
@@ -383,23 +384,36 @@ if len(final) > 0:
         st.write(week_df)
 
     keep_df(final)
-
+    df_2018, df_2019, df_lm = past_data(store_code, start_date, end_date)
+    st.header('Aggregated Forecast')
+    compare_past = st.checkbox('Compare Past Data')
     if compare_past:
-        df_2018, df_2019, df_lm = past_data(store_code, start_date, end_date)
-        fig = px.line(final_edit, x=final_edit.index, y=final_edit.columns)
         df_2018 = df_2018.resample(data_resample_option).sum()
         df_2019 = df_2019.resample(data_resample_option).sum()
         df_lm = df_lm.resample(data_resample_option).sum()
-        for store in df_2018.columns:
-            fig.add_trace(go.Scatter(x=final_edit.index, y=df_2018[store], name= store + ' (2018)'))
-        for store in df_2019.columns:
-            fig.add_trace(go.Scatter(x=final_edit.index, y=df_2019[store], name=store+' (2019)'))
-        for store in df_lm.columns:
-            fig.add_trace(go.Scatter(x=final_edit.index, y=df_lm[store], name=store+' (Last Month)'))
+        fig = make_subplots(rows=4,cols=1)
+        fig.append_trace(go.Scatter(x=final_edit.index, y=final_edit.total, name= 'Aggregated Forecast',fill='tozeroy'), row=1, col=1)
+        fig.append_trace(go.Scatter(x=df_2019.index, y=df_2019['total'], name='Aggregate (2019)',fill='tozeroy'), row=3, col=1)
+        fig.append_trace(go.Scatter(x=df_2018.index, y=df_2018['total'], name= 'Aggregate (2018)',fill='tozeroy'), row=2, col=1)
+        fig.append_trace(go.Scatter(x=df_lm.index, y=df_lm['total'], name='Aggregate (Last Month)',fill='tozeroy'), row=4, col=1)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        fig = px.line(final_edit, x=final_edit.index, y=final_edit.columns)
+        fig = px.area(final_edit, x=final_edit.index, y=final_edit.total)
         st.plotly_chart(fig, use_container_width=True)
+
+    def SSSG(df_past, df, resample):
+        df_sssg = pd.DataFrame()
+        if resample == 'W':
+            df_past = df_past.resample('W').sum()
+            df = df.resample('W').sum()
+            df_past = df_past.reset_index()
+            df = df.reset_index()
+            df_past.ds = df_past.ds.dt.week
+            df.ds = df.ds.dt.week   
+            df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
+            df_sssg = df_sssg.set_index('ds').pct_change(axis='columns')
+        return df_sssg
+    st.write(SSSG(df_2019, final_edit,'W'))
 
     def to_excel(df):
 
