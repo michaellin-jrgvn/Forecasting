@@ -274,6 +274,7 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
     def fit_pred_model(store_code):
         ''' Fit and predict model in a for loop '''
         m_list = {}
+        forecast_by_store = {}
         final = pd.DataFrame()
         with st.spinner('Wait for it...'):
             for i, code in enumerate(store_code):
@@ -282,7 +283,8 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
                     df=read_file(code)
                     m = fit_model(df, code, holidays, 'all')
                     m_list[code] = m
-                    forecast = predict_model(m, forecast_date_range[0],forecast_date_range[1], 'H')
+                    forecast = predict_model(m, forecast_date_range[0],forecast_date_range[1] + datetime.timedelta(days=1), 'H')
+                    forecast_by_store[code] = forecast
                     shop_yhat = forecast[['ds','yhat']]
                     shop_yhat = shop_yhat.rename(columns={'yhat': code})
                     final = pd.merge(final, shop_yhat.set_index('ds'), how='outer', left_index=True, right_index=True)
@@ -290,19 +292,65 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
                     st.warning('No data is available for ' + store_code)
                     pass
         st.balloons()
-        return final
-
-    final = fit_pred_model(store_code)
-
-if len(final) > 0:
-    # Expander - Forecast Filter and Fine tune
-    with st.sidebar.beta_expander("Forecast Filter and Fintuning", expanded=True):
-        compare_yoy = st.checkbox('Compare Last Year')
-        min_value = final.index.min().to_pydatetime()
-        max_value = final.index.max().to_pydatetime()
-        test = st.slider(label='finetuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
-        st.sidebar.write(test)
+        return final, df, forecast_by_store
     
+    @st.cache(suppress_st_warning=True)
+    def past_data(store_code,start_date,end_date):
+        ''' Generate historical data for comparison '''
+        df_2018 = pd.DataFrame()
+        df_2019 = pd.DataFrame()
+        df_lm = pd.DataFrame()
+        for store in (store_code):
+            df = read_file(store)
+            try:
+                past_2018_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-2): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-2)].resample('H').sum()
+                past_2018_df = past_2018_df['bill_size']
+                past_2018_df = past_2018_df.reset_index()
+                past_2018_df = past_2018_df.rename(columns={'datetime':'ds','bill_size': store})
+                df_2018 = pd.merge(df_2018, past_2018_df.set_index('ds'), how='outer', left_index=True, right_index=True)
+            except:
+                st.warning('No data in 2018')
+                pass
+            try:
+                past_2019_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-1)].resample('H').sum()
+                past_2019_df = past_2019_df['bill_size']
+                past_2019_df = past_2019_df.reset_index()
+                past_2019_df = past_2019_df.rename(columns={'datetime':'ds','bill_size': store})
+                df_2019 = pd.merge(df_2019, past_2019_df.set_index('ds'), how='outer', left_index=True, right_index=True)
+            except:
+                st.warning('No data in 2019')
+                pass
+            try:
+                past_lm_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(months=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(months=-1)].resample('H').sum()
+                past_lm_df = past_lm_df['bill_size']
+                past_lm_df = past_lm_df.reset_index()
+                past_lm_df = past_lm_df.rename(columns={'datetime':'ds','bill_size': store})
+                df_lm = pd.merge(df_lm, past_lm_df.set_index('ds'), how='outer', left_index=True, right_index=True)
+            except:
+                st.warning('No data in last month')
+                pass
+            past_2018_df['total'] = past_2018_df.sum()
+            past_2019_df['total'] = past_2019_df.sum()
+            df_lm['total'] = df_lm.sum()             
+        return df_2018, df_2019, df_lm
+
+    final, df_past, forecast_by_store = fit_pred_model(store_code)
+
+final = final.loc[~(final<=0).all(axis=1)]
+df_past = df_past[['datetime','bill_size']]
+df_past = df_past.set_index('datetime')
+
+    
+# Expander - Forecast Filter and Fine tune
+with st.sidebar.beta_expander("Forecast Filter and Fintuning", expanded=True):
+    compare_past = st.checkbox('Compare Last Year')
+    min_value = final.index.min().to_pydatetime()
+    max_value = final.index.max().to_pydatetime()
+    test = st.slider(label='finetuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
+    st.sidebar.write(test)
+
+
+if len(final) > 0:    
     st.title('Generated Forecast')
     # Select box to display data rsampled by Hour, Day, Week, and Month
     resample_data =[['Hour','H'],['Day','D'],['Week','W'],['Month','M']]
@@ -313,33 +361,45 @@ if len(final) > 0:
     data_resample_option = st.selectbox('Data resample by:',resample_id,format_func=lambda x:dic[x])
     final_edit = final.resample(data_resample_option).sum()
 
-    col1, col2 = st.beta_columns([1, 3])
+    col1, col2, col3 = st.beta_columns([1, 1, 1])
     with col1:
         st.header('Statistical Description')
-        st.write(final.describe())
+        st.write(final.resample(data_resample_option).sum().describe())
     with col2:
         st.header('Details')
         # Streamlit is current having a bug to convert datetime to the timezone of the server. 
         # So, it is advised to convert datetime to string to display the time correctly
         final_display = final.reset_index()
+        final_display = final_display.set_index('ds')
+        final_display = final_display.resample(data_resample_option).sum()
+        final_display = final_display.reset_index()
         final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
         final_display = final_display.set_index('ds')
-        st.dataframe(final_display.T)
+        st.dataframe(final_display)
+    with col3:
+        st.header('Days breakdown')
+        week_df = final.resample(data_resample_option).sum()
+        week_df = week_df.groupby(week_df.index.day_name()).agg(['count','mean','std'])
+        st.write(week_df)
 
-    if compare_yoy:
-        plot = read_file(store_code[0])
-        plot = plot.set_index('datetime')
-        ly_range = (forecast_date_range[0] + pd.offsets.DateOffset(years=-1), forecast_date_range[1] + pd.offsets.DateOffset(years=-1))
-        ly_data = plot.loc[ly_range[0]:ly_range[1],'bill_size']
-        ly_data = ly_data.resample(data_resample_option).sum()
+    keep_df(final)
+
+    if compare_past:
+        df_2018, df_2019, df_lm = past_data(store_code, start_date, end_date)
         fig = px.line(final_edit, x=final_edit.index, y=final_edit.columns)
-        fig.add_trace(go.Scatter(x=final_edit.index, y=ly_data))
-        # st.plotly_chart(compare_fig, use_container_width=True)
+        df_2018 = df_2018.resample(data_resample_option).sum()
+        df_2019 = df_2019.resample(data_resample_option).sum()
+        df_lm = df_lm.resample(data_resample_option).sum()
+        for store in df_2018.columns:
+            fig.add_trace(go.Scatter(x=final_edit.index, y=df_2018[store], name= store + ' (2018)'))
+        for store in df_2019.columns:
+            fig.add_trace(go.Scatter(x=final_edit.index, y=df_2019[store], name=store+' (2019)'))
+        for store in df_lm.columns:
+            fig.add_trace(go.Scatter(x=final_edit.index, y=df_lm[store], name=store+' (Last Month)'))
+        st.plotly_chart(fig, use_container_width=True)
     else:
         fig = px.line(final_edit, x=final_edit.index, y=final_edit.columns)
-    st.plotly_chart(fig, use_container_width=True)
-    
-    keep_df(final)
+        st.plotly_chart(fig, use_container_width=True)
 
     def to_excel(df):
 
