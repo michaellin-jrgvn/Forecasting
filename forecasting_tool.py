@@ -171,6 +171,7 @@ def fit_model(df, store_code, holidays, channel):
 @st.cache
 def store_code():
     df = pd.read_excel('./data/Tracking store by year.xls', nrows=100,usecols=['Store Code','Store', 'AC', 'Region','Province','Concept','Opening Date'],parse_dates=['Opening Date'])
+
     df['full_name'] = df['Store Code'] + '-' + df['Store']
     return df
 
@@ -227,7 +228,11 @@ def keep_df(df):
 # Read Dataset
 @st.cache
 def read_file(store_code):
-    df = pd.read_csv('./data/' + store_code + '.csv', parse_dates=['datetime'])
+    try:
+        df = pd.read_csv('./data/' + store_code + '.csv', parse_dates=['datetime'])
+    except:
+        print(store_code + 'file is not available')
+        pass
     return df
 
 st.set_page_config(
@@ -302,34 +307,38 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
         df_2019 = pd.DataFrame()
         df_lm = pd.DataFrame()
         for store in (store_code):
-            df = read_file(store)
-            try:
-                past_2018_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-2): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-2)].resample('H').sum()
-                past_2018_df = past_2018_df['bill_size']
-                past_2018_df = past_2018_df.reset_index()
-                past_2018_df = past_2018_df.rename(columns={'datetime':'ds','bill_size': store})
-                df_2018 = pd.merge(df_2018, past_2018_df.set_index('ds'), how='outer', left_index=True, right_index=True)
-            except:
-                st.warning('No data in 2018')
-                pass
-            try:
-                past_2019_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-1)].resample('H').sum()
-                past_2019_df = past_2019_df['bill_size']
-                past_2019_df = past_2019_df.reset_index()
-                past_2019_df = past_2019_df.rename(columns={'datetime':'ds','bill_size': store})
-                df_2019 = pd.merge(df_2019, past_2019_df.set_index('ds'), how='outer', left_index=True, right_index=True)
-            except:
-                st.warning('No data in 2019')
-                pass
-            try:
-                past_lm_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(months=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(months=-1)].resample('H').sum()
-                past_lm_df = past_lm_df['bill_size']
-                past_lm_df = past_lm_df.reset_index()
-                past_lm_df = past_lm_df.rename(columns={'datetime':'ds','bill_size': store})
-                df_lm = pd.merge(df_lm, past_lm_df.set_index('ds'), how='outer', left_index=True, right_index=True)
-            except:
-                st.warning('No data in last month')
-                pass
+            store_opening = pd.to_datetime(store_code_func[store_code_func['Store Code'] == store]['Opening Date'])
+            if (store_opening < (datetime.date.today() + pd.offsets.DateOffset(years=-1))).bool():
+                df = read_file(store)
+                try:
+                    past_2018_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-2): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-2)].resample('H').sum()
+                    past_2018_df = past_2018_df['bill_size']
+                    past_2018_df = past_2018_df.reset_index()
+                    past_2018_df = past_2018_df.rename(columns={'datetime':'ds','bill_size': store})
+                    df_2018 = pd.merge(df_2018, past_2018_df.set_index('ds'), how='outer', left_index=True, right_index=True)
+                except:
+                    st.warning('No data in 2018')
+                    pass
+                try:
+                    past_2019_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-1)].resample('H').sum()
+                    past_2019_df = past_2019_df['bill_size']
+                    past_2019_df = past_2019_df.reset_index()
+                    past_2019_df = past_2019_df.rename(columns={'datetime':'ds','bill_size': store})
+                    df_2019 = pd.merge(df_2019, past_2019_df.set_index('ds'), how='outer', left_index=True, right_index=True)
+                except:
+                    st.warning('No data in 2019')
+                    pass
+                try:
+                    past_lm_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(months=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(months=-1)].resample('H').sum()
+                    past_lm_df = past_lm_df['bill_size']
+                    past_lm_df = past_lm_df.reset_index()
+                    past_lm_df = past_lm_df.rename(columns={'datetime':'ds','bill_size': store})
+                    df_lm = pd.merge(df_lm, past_lm_df.set_index('ds'), how='outer', left_index=True, right_index=True)
+                except:
+                    st.warning('No data in last month')
+                    pass
+            else:
+                st.warning('insufficient data for '+ store_code)
         df_2018['total'] = df_2018.sum(axis=1)
         df_2019['total'] = df_2019.sum(axis=1)
         df_lm['total'] = df_lm.sum(axis=1)             
@@ -337,20 +346,20 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
 
     final, df_past, forecast_by_store = fit_pred_model(store_code)
 
+
 final = final.loc[~(final<=0).all(axis=1)]
 df_past = df_past[['datetime','bill_size']]
 df_past = df_past.set_index('datetime')
 
-    
-# Expander - Forecast Filter and Fine tune
-with st.sidebar.beta_expander("Forecast Filter and Fine tuning", expanded=True):
-    min_value = final.index.min().to_pydatetime()
-    max_value = final.index.max().to_pydatetime()
-    test = st.slider(label='fine tuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
-    st.sidebar.write(test)
-
 
 if len(final) > 0:    
+    # Expander - Forecast Filter and Fine tune
+    with st.sidebar.beta_expander("Forecast Filter and Fine tuning", expanded=True):
+        min_value = final.index.min().to_pydatetime()
+        max_value = final.index.max().to_pydatetime()
+        test = st.slider(label='fine tuning range', min_value=min_value,max_value=max_value,value=(min_value,max_value))
+        st.sidebar.write(test)
+
     st.title('Generated Forecast')
     # Select box to display data rsampled by Hour, Day, Week, and Month
     resample_data =[['Hour','H'],['Day','D'],['Week','W'],['Month','M']]
@@ -365,7 +374,7 @@ if len(final) > 0:
     col1, col2, col3 = st.beta_columns([1, 1, 1])
     with col1:
         st.header('Statistical Description')
-        st.write(final.resample(data_resample_option).sum().describe())
+        st.dataframe(final.resample(data_resample_option).sum().describe())
     with col2:
         st.header('Details')
         # Streamlit is current having a bug to convert datetime to the timezone of the server. 
@@ -388,14 +397,14 @@ if len(final) > 0:
     st.header('Aggregated Forecast')
     compare_past = st.checkbox('Compare Past Data')
     if compare_past:
-        df_2018 = df_2018.resample(data_resample_option).sum()
-        df_2019 = df_2019.resample(data_resample_option).sum()
-        df_lm = df_lm.resample(data_resample_option).sum()
+        df_2018_resampled = df_2018.resample(data_resample_option).sum()
+        df_2019_resampled = df_2019.resample(data_resample_option).sum()
+        df_lm_resampled = df_lm.resample(data_resample_option).sum()
         fig = make_subplots(rows=4,cols=1)
         fig.append_trace(go.Scatter(x=final_edit.index, y=final_edit.total, name= 'Aggregated Forecast',fill='tozeroy'), row=1, col=1)
-        fig.append_trace(go.Scatter(x=df_2019.index, y=df_2019['total'], name='Aggregate (2019)',fill='tozeroy'), row=3, col=1)
-        fig.append_trace(go.Scatter(x=df_2018.index, y=df_2018['total'], name= 'Aggregate (2018)',fill='tozeroy'), row=2, col=1)
-        fig.append_trace(go.Scatter(x=df_lm.index, y=df_lm['total'], name='Aggregate (Last Month)',fill='tozeroy'), row=4, col=1)
+        fig.append_trace(go.Scatter(x=df_2019_resampled.index, y=df_2019_resampled['total'], name='Aggregate (LY)',fill='tozeroy'), row=2, col=1)
+        fig.append_trace(go.Scatter(x=df_2018_resampled.index, y=df_2018_resampled['total'], name= 'Aggregate (2Ys)',fill='tozeroy'), row=3, col=1)
+        fig.append_trace(go.Scatter(x=df_lm_resampled.index, y=df_lm_resampled['total'], name='Aggregate (Last Month)',fill='tozeroy'), row=4, col=1)
         st.plotly_chart(fig, use_container_width=True)
     else:
         fig = px.area(final_edit, x=final_edit.index, y=final_edit.total)
@@ -403,17 +412,43 @@ if len(final) > 0:
 
     def SSSG(df_past, df, resample):
         df_sssg = pd.DataFrame()
+        if resample == 'D':
+            df_past = df_past.resample('D').sum()
+            df = df.resample('D').sum()
+            df_past = df_past.reset_index()
+            df = df.reset_index()
+            df_past.ds = df_past.ds.dt.dayofyear
+            df.ds = df.ds.dt.dayofyear  
+            df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
+            df_sssg = df_sssg.set_index('ds')
+            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
+
         if resample == 'W':
             df_past = df_past.resample('W').sum()
             df = df.resample('W').sum()
             df_past = df_past.reset_index()
             df = df.reset_index()
-            df_past.ds = df_past.ds.dt.week
-            df.ds = df.ds.dt.week   
+            df_past.ds = df_past.ds.dt.strftime('%U')
+            df.ds = df.ds.dt.strftime('%U')  
             df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
-            df_sssg = df_sssg.set_index('ds').pct_change(axis='columns')
-        return df_sssg
-    st.write(SSSG(df_2019, final_edit,'W'))
+            df_sssg = df_sssg.set_index('ds')
+            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
+        
+        if resample == 'M':
+            df_past = df_past.resample('M').sum()
+            df = df.resample('M').sum()
+            df_past = df_past.reset_index()
+            df = df.reset_index()
+            df_past.ds = df_past.ds.dt.strftime('%B')
+            df.ds = df.ds.dt.strftime('%B')
+            df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
+            df_sssg = df_sssg.set_index('ds')
+            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)           
+        
+        return sssg_total
+    sssg = SSSG(df_2019, final_edit,data_resample_option)
+    sssg_plot = px.bar(sssg, x=sssg.index, y=sssg, title='SSSG')
+    st.plotly_chart(sssg_plot, use_container_width=True)
 
     def to_excel(df):
 
