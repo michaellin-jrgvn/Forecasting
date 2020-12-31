@@ -374,7 +374,7 @@ if len(final) > 0:
     col1, col2, col3 = st.beta_columns([1, 1, 1])
     with col1:
         st.header('Statistical Description')
-        st.dataframe(final.resample(data_resample_option).sum().describe())
+        st.dataframe(final.resample(data_resample_option).sum().describe().T)
     with col2:
         st.header('Details')
         # Streamlit is current having a bug to convert datetime to the timezone of the server. 
@@ -385,12 +385,12 @@ if len(final) > 0:
         final_display = final_display.reset_index()
         final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
         final_display = final_display.set_index('ds')
-        st.dataframe(final_display)
+        st.dataframe(final_display.T)
     with col3:
         st.header('Days breakdown')
         week_df = final.resample(data_resample_option).sum()
         week_df = week_df.groupby(week_df.index.day_name()).agg(['count','mean','std'])
-        st.write(week_df)
+        st.write(week_df.T)
 
     keep_df(final)
     df_2018, df_2019, df_lm = past_data(store_code, start_date, end_date)
