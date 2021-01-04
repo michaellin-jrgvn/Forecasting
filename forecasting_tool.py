@@ -259,7 +259,7 @@ with st.sidebar.beta_expander("Forecast Generator Setting"):
     store_select_option = st.radio('1️⃣ - Select Stores:', ('by Individual/Multiple Stores','by AC','by Region','All Stores'))
     if store_select_option == 'All Stores':
         st.warning('⚡ The time requires to forecast all store could take up to 3 hours')
-        store_code = store_code_func
+        store_code = store_code_func['Store Code']
     elif store_select_option == 'by Individual/Multiple Stores':
         store_selected = st.multiselect('Select store code to be forecasted:', store_code_func['full_name'])
         store_code = store_code_func[store_code_func['full_name'].isin(store_selected)]['Store Code']
