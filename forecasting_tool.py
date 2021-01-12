@@ -409,11 +409,10 @@ if len(final) > 0:
     else:
         fig = px.area(final_edit, x=final_edit.index, y=final_edit.total)
         st.plotly_chart(fig, use_container_width=True)
-    
-    st.write(store_code_func)
 
     def SSSG(df_past, df, resample):
         df_sssg = pd.DataFrame()
+
         if resample == 'D':
             df_past = df_past.resample('D').sum()
             df = df.resample('D').sum()
@@ -445,12 +444,16 @@ if len(final) > 0:
             df.ds = df.ds.dt.strftime('%B')
             df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
             df_sssg = df_sssg.set_index('ds')
-            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)           
+            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
+        
+        else:
+            sssg_total = 0
         
         return sssg_total
     sssg = SSSG(df_2019, final_edit,data_resample_option)
-    sssg_plot = px.bar(sssg, x=sssg.index, y=sssg, title='SSSG')
-    st.plotly_chart(sssg_plot, use_container_width=True)
+    if sssg > 0:
+        sssg_plot = px.bar(sssg, x=sssg.index, y=sssg, title='SSSG')
+        st.plotly_chart(sssg_plot, use_container_width=True)
 
 
     def to_excel(df, store_code_func):
