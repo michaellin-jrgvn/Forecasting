@@ -409,6 +409,8 @@ if len(final) > 0:
     else:
         fig = px.area(final_edit, x=final_edit.index, y=final_edit.total)
         st.plotly_chart(fig, use_container_width=True)
+    
+    st.write(store_code_func)
 
     def SSSG(df_past, df, resample):
         df_sssg = pd.DataFrame()
@@ -450,38 +452,38 @@ if len(final) > 0:
     sssg_plot = px.bar(sssg, x=sssg.index, y=sssg, title='SSSG')
     st.plotly_chart(sssg_plot, use_container_width=True)
 
-    def to_excel(df):
 
-        # Generate dataframe with different time samples
-        df_d = df.resample('D').sum().T
-        df_d.loc['Total']= df_d.sum()
-
-        df_w = df.resample('W').sum().T
-        df_w.loc['Total']= df_w.sum()
-
-        df_m = df.resample('M').sum().T
-        df_m.loc['Total']= df_m.sum()
-
-        df_summary = df_m.loc['Total']
-        df_h = df.T
-
+    def to_excel(df, store_code_func):
         # Set up Excel file writer
         output = BytesIO()
         writer = pd.ExcelWriter(output)
 
-        # Write each dataframe to a different worksheet.
-        df_h.to_excel(writer, sheet_name='By hour')
-        df_d.to_excel(writer, sheet_name='By day')
-        df_w.to_excel(writer, sheet_name='By week')
-        df_m.to_excel(writer, sheet_name='By month')
-        df_summary.to_excel(writer, sheet_name='Summary')
+        # Set store code as index ready to merge with df
+        store_code_func = store_code_func.set_index('Store Code')
+ 
+        resample_key = ['H','D','W','M']
+        resample_name = ['By Hour','By Day','By Week','By Month']
+        
+        for k, n in zip(resample_key, resample_name):
+            if k is 'H':
+                df1 = df.T
+            else:
+                # Generate dataframe with different time samples
+                df1 = df.resample(k).sum().T
+            df2 = store_code_func.merge(df1, left_index=True, right_index=True)
+            df2 = df2.drop(['full_name', 'Opening Date'], axis=1)
+            df2.loc['Total']= df2.sum()
+            df2.loc['Total',['Store','AC','Region','Concept','Province']] = ""
+
+            # Write each dataframe to a different worksheet.
+            df2.to_excel(writer, sheet_name=n)
 
         writer.save()
         processed_data = output.getvalue()
         return processed_data
 
     def get_table_download_link(df):
-        val = to_excel(df)
+        val = to_excel(df, store_code_func)
         b64 = base64.b64encode(val)  # val looks like b'...'
         return f'<a href="data:application/octet-stream;base64,{b64.decode()}" download="extract.xlsx">Download file</a>' # decode b'abc' => abc
 
