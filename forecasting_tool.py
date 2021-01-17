@@ -238,7 +238,7 @@ def read_file(store_code):
 st.set_page_config(
      page_title="Ballz",
      page_icon=":crystal_ball:",
-     layout="wide",
+     layout="centered",
      initial_sidebar_state="expanded",
 )
 
@@ -252,7 +252,7 @@ st.sidebar.write('Please update your dataset if the data is not up-to-date.')
 
 
 # Expander - Forecast Generation Setting
-with st.sidebar.beta_expander("Forecast Generator Setting"):
+with st.sidebar.beta_expander("Forecast Generator Setting", expanded=True):
 
     store_code_func = store_code()
 
@@ -371,44 +371,9 @@ if len(final) > 0:
     final_edit = final.resample(data_resample_option).sum()
     final_edit['total'] = final_edit.sum(axis=1)
 
-    col1, col2, col3 = st.beta_columns([1, 1, 1])
-    with col1:
-        st.header('Statistical Description')
-        st.dataframe(final.resample(data_resample_option).sum().describe().T)
-    with col2:
-        st.header('Details')
-        # Streamlit is current having a bug to convert datetime to the timezone of the server. 
-        # So, it is advised to convert datetime to string to display the time correctly
-        final_display = final.reset_index()
-        final_display = final_display.set_index('ds')
-        final_display = final_display.resample(data_resample_option).sum()
-        final_display = final_display.reset_index()
-        final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
-        final_display = final_display.set_index('ds')
-        st.dataframe(final_display.T)
-    with col3:
-        st.header('Days breakdown')
-        week_df = final.resample(data_resample_option).sum()
-        week_df = week_df.groupby(week_df.index.day_name()).agg(['count','mean','std'])
-        st.write(week_df.T)
-
     keep_df(final)
     df_2018, df_2019, df_lm = past_data(store_code, start_date, end_date)
-    st.header('Aggregated Forecast')
-    compare_past = st.checkbox('Compare Past Data')
-    if compare_past:
-        df_2018_resampled = df_2018.resample(data_resample_option).sum()
-        df_2019_resampled = df_2019.resample(data_resample_option).sum()
-        df_lm_resampled = df_lm.resample(data_resample_option).sum()
-        fig = make_subplots(rows=4,cols=1)
-        fig.append_trace(go.Scatter(x=final_edit.index, y=final_edit.total, name= 'Aggregated Forecast',fill='tozeroy'), row=1, col=1)
-        fig.append_trace(go.Scatter(x=df_2019_resampled.index, y=df_2019_resampled['total'], name='Aggregate (LY)',fill='tozeroy'), row=2, col=1)
-        fig.append_trace(go.Scatter(x=df_2018_resampled.index, y=df_2018_resampled['total'], name= 'Aggregate (2Ys)',fill='tozeroy'), row=3, col=1)
-        fig.append_trace(go.Scatter(x=df_lm_resampled.index, y=df_lm_resampled['total'], name='Aggregate (Last Month)',fill='tozeroy'), row=4, col=1)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        fig = px.area(final_edit, x=final_edit.index, y=final_edit.total)
-        st.plotly_chart(fig, use_container_width=True)
+
 
     def SSSG(df_past, df, resample):
         df_sssg = pd.DataFrame()
@@ -422,8 +387,7 @@ if len(final) > 0:
             df.ds = df.ds.dt.dayofyear  
             df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
             df_sssg = df_sssg.set_index('ds')
-            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
-
+            df_sssg['total'] = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
         if resample == 'W':
             df_past = df_past.resample('W').sum()
             df = df.resample('W').sum()
@@ -432,8 +396,7 @@ if len(final) > 0:
             df_past.ds = df_past.ds.dt.strftime('%U')
             df.ds = df.ds.dt.strftime('%U')  
             df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
-            df_sssg = df_sssg.set_index('ds')
-            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
+            df_sssg['total'] = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
         
         if resample == 'M':
             df_past = df_past.resample('M').sum()
@@ -443,17 +406,63 @@ if len(final) > 0:
             df_past.ds = df_past.ds.dt.strftime('%B')
             df.ds = df.ds.dt.strftime('%B')
             df_sssg = pd.merge(df_past,df, how='outer',left_on='ds',right_on='ds',suffixes=('(LY)','(Fcst)')) 
-            df_sssg = df_sssg.set_index('ds')
-            sssg_total = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
+            df_sssg['total'] = (df_sssg['total(Fcst)'].sub(df_sssg['total(LY)']).div(df_sssg['total(LY)'])).mul(100)
+
         
+        if resample == 'H':
+            st.warning('SSSG is not available when data is resampled by Hour. Please change data resample to by Day/Week/Month for SSSG display.')
+        
+        return df_sssg
+    
+
+    with st.beta_expander("Inspect Aggregated Store", expanded=True):
+        compare_past = st.checkbox('Compare Past Data')
+        if compare_past:
+            ly_shift = st.sidebar.slider('Shift past LY plot', min_value=-30, max_value=30, value=0, step=1)
+
+            sssg = SSSG(df_2019, final_edit,data_resample_option)
+            df_2018_resampled = df_2018.resample(data_resample_option).sum()
+            df_2019_resampled = df_2019.resample(data_resample_option).sum()
+            df_lm_resampled = df_lm.resample(data_resample_option).sum()
+
+            fig = make_subplots(rows=3,cols=1, subplot_titles=('Aggregated Forecast','Aggregate (LY)', 'SSSG(%)'))
+            fig.append_trace(go.Scatter(x=final_edit.index, y=final_edit.total, name= 'Aggregated Forecast',fill='tozeroy'), row=1, col=1)
+            fig.append_trace(go.Scatter(x=df_2019_resampled.index.shift(ly_shift), y=df_2019_resampled['total'].shift(ly_shift), name='Aggregate (LY)',fill='tozeroy'), row=2, col=1)
+            if data_resample_option != 'H':
+                fig.append_trace(go.Scatter(x=final_edit.index,y=sssg['total'], name='SSSG (%)',fill='tozeroy'),row=3,col=1)
+            #fig.append_trace(go.Scatter(x=df_2018_resampled.index, y=df_2018_resampled['total'], name= 'Aggregate (2Ys)',fill='tozeroy'), row=3, col=1)
+            #fig.append_trace(go.Scatter(x=df_lm_resampled.index, y=df_lm_resampled['total'], name='Aggregate (Last Month)',fill='tozeroy'), row=4, col=1)
+            fig.update_layout(showlegend=False,height=900)
+            st.plotly_chart(fig, use_container_width=False)
+            
         else:
-            sssg_total = 0
-        
-        return sssg_total
-    sssg = SSSG(df_2019, final_edit,data_resample_option)
-    if sssg > 0:
-        sssg_plot = px.bar(sssg, x=sssg.index, y=sssg, title='SSSG')
-        st.plotly_chart(sssg_plot, use_container_width=True)
+            fig = px.area(final_edit, x=final_edit.index, y=final_edit.total)
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+        col1, col2 = st.beta_columns([2, 3])
+        with col1:
+            st.subheader('Forecast Total')
+            forecast_total=pd.DataFrame()
+            forecast_total['Total'] = final.sum(axis=0)
+            st.dataframe(forecast_total)
+        with col2:
+            st.subheader('Statistical Description')
+            st.dataframe(final.resample(data_resample_option).sum().describe().T)
+
+
+        st.subheader('Details')
+        # Streamlit is current having a bug to convert datetime to the timezone of the server. 
+        # So, it is advised to convert datetime to string to display the time correctly
+        final_display = final.reset_index()
+        final_display = final_display.set_index('ds')
+        final_display = final_display.resample(data_resample_option).sum()
+        final_display = final_display.reset_index()
+        final_display.ds = pd.to_datetime(final_display.ds).dt.strftime('%Y-%m-%d %H:%M').astype(str)
+        final_display = final_display.set_index('ds')
+        st.dataframe(final_display.T)
+
+
 
 
     def to_excel(df, store_code_func):
@@ -493,3 +502,13 @@ if len(final) > 0:
     st.sidebar.subheader('Download Data')
     st.sidebar.write('Click the link below to download the data for your own use:')
     st.sidebar.markdown(get_table_download_link(final), unsafe_allow_html=True)
+
+with st.beta_expander("Inspect Individual Store", expanded=True):
+    store_display = store_code_func[store_code_func['Store Code'].isin(store_code)]['full_name'].reset_index().drop('index',axis=1)
+    selected_store_display = st.selectbox('Select stores', store_display, index=1)
+    selected_store_code = store_code_func[store_code_func['full_name'] == selected_store_display]['Store Code']
+    selected_store_data = final_edit[selected_store_code]
+    individual_store_chart = px.area(selected_store_data)
+    individual_store_chart.update_layout(height=300)
+    individual_store_chart.update_layout(showlegend=False)
+    st.plotly_chart(individual_store_chart, use_container_width=True)
