@@ -450,11 +450,14 @@ if len(final) > 0:
     sssg_plot = px.bar(sssg, x=sssg.index, y=sssg, title='SSSG')
     st.plotly_chart(sssg_plot, use_container_width=True)
 
-    def to_excel(df):
+    def to_excel(df, store_info):
+
+        store_info = store_info[['Store Code','Store','AC','Region','Concept']].set_index('Store Code')
 
         # Generate dataframe with different time samples
         df_d = df.resample('D').sum().T
         df_d.loc['Total']= df_d.sum()
+        df_d = df_d.merge('store_info',how='left',left_index=True,right_index=True)
 
         df_w = df.resample('W').sum().T
         df_w.loc['Total']= df_w.sum()
