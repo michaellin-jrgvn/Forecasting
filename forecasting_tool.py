@@ -19,15 +19,15 @@ from plotly.subplots import make_subplots
 tet_holiday_2021 = pd.DataFrame({
     'holiday': 'tet_holiday_2021',
     'ds': pd.date_range('2021-02-10',periods=7,freq='D'),
-    'lower_window': -3,
-    'upper_window':10,
+    'lower_window': -5,
+    'upper_window':4,
     'prior_scale': 15
 })
 tet_holiday = pd.DataFrame({
     'holiday': 'tet_holiday',
     'ds': pd.date_range('2020-01-23',periods=6,freq='D'),
-    'lower_window': -3,
-    'upper_window':10,
+    'lower_window': -5,
+    'upper_window':4,
     'prior_scale': 15
 })
 women_day = pd.DataFrame({
