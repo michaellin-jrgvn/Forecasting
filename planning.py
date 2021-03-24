@@ -286,7 +286,12 @@ for channel in channel_list:
 
 # Set up to split and resample df by channels
 channels_split_df = {}
-select_resample = st.sidebar.selectbox('Select Resample Period', ['D','W','M','30min'])
+select_resample = st.sidebar.selectbox('Select Resample Period', ['D','W','M','H','30min'])
+
+# Split pickup by TC, sales and TA by resample option
+channels_split_df['Dinein - TC'] = resample_tc(select_resample,channels_df['Dinein'])
+channels_split_df['Dinein - Sales'] = resample_sales(select_resample,channels_df['Dinein'])
+channels_split_df['Dinein - TA'] = resample_ta(select_resample,channels_split_df['Dinein - Sales'],channels_split_df['Dinein - TC'])
 
 # Split pickup by TC, sales and TA by resample option
 channels_split_df['Pickup - TC'] = resample_tc(select_resample,channels_df['Pickup'])
@@ -312,6 +317,25 @@ if select_decompose:
     decompose_fig.update_layout(height=600)
     st.plotly_chart(decompose_fig, use_container_width=True)
 else:
+    # Plot normal chart without seasonal decompose
     channels_plot = px.line(channels_split_df[df_display])
     channels_plot.update_layout(height=300)
     st.plotly_chart(channels_plot)
+    df_fit = channels_split_df[df_display].reset_index()
+    df_fit = df_fit.rename(columns={'datetime':'ds','bill_size':'y'})
+    #df_fit.datetime = pd.to_datetime(df_fit.datetime)
+    m = Prophet(holidays=holidays,seasonality_mode='multiplicative',uncertainty_samples=100)
+    m.fit(df_fit)
+    future = m.make_future_dataframe(periods=7)
+    forecast = m.predict(future)
+    fig1 = m.plot(forecast)
+    st.write(fig1)
+    fig2 = m.plot_components(forecast)
+    st.write(fig2)
+    st.write(forecast)
+    def mape(actual, forecast):
+        mape = abs((actual-forecast)/forecast) * 100
+        return mape
+    mape = mape(forecast['yhat'],df_fit['y']).dropna()
+    mape_plot = px.box(mape)
+    fig3=st.plotly_chart(mape_plot,use_container_width=True)
