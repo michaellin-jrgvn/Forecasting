@@ -8,13 +8,14 @@ import os
 
 from fbprophet import Prophet
 from fbprophet.plot import plot_plotly, plot_components_plotly
+from scipy.stats import boxcox
+from scipy.special import inv_boxcox
 
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from statsmodels.tsa.seasonal import seasonal_decompose
-
 
 # Define holidays and events
 tet_holiday_2021 = pd.DataFrame({
@@ -86,11 +87,29 @@ observance_2018 = pd.DataFrame({
     'upper_window': 0,
     'prior_scale': 3
 })
-covid_lockdown = pd.DataFrame({
+covid_wave_1 = pd.DataFrame({
     'holiday': 'covid_lockdown',
-    'ds': pd.date_range('2020-04-01',periods=23,freq='D'),
+    'ds': pd.date_range('2020-04-01',periods=22,freq='D'),
     'lower_window': 0,
     'upper_window': 2,
+})
+covid_wave_2 = pd.DataFrame({
+    'holiday': 'covid_lockdown',
+    'ds': pd.date_range('2020-07-24',periods=30,freq='D'),
+    'lower_window': 0,
+    'upper_window': 7,
+})
+covid_wave_3 = pd.DataFrame({
+    'holiday': 'covid_lockdown',
+    'ds': pd.date_range('2020-11-29',periods=26,freq='D'),
+    'lower_window': 0,
+    'upper_window': 7,
+})
+covid_wave_4 = pd.DataFrame({
+    'holiday': 'covid_lockdown',
+    'ds': pd.date_range('2021-01-28',periods=58,freq='D'),
+    'lower_window': 0,
+    'upper_window': 7,
 })
 school_holiday = pd.DataFrame({
     'holiday': 'school_breaks',
@@ -99,41 +118,35 @@ school_holiday = pd.DataFrame({
     'upper_window': 0,    
 })
 
-holidays = pd.concat((tet_holiday,national_holidays,observance_2020, observance_2019, observance_2018,women_day,v_day, covid_lockdown, school_holiday, teachers_day))
+holidays = pd.concat((tet_holiday,national_holidays,observance_2020, observance_2019, observance_2018,women_day,v_day, covid_wave_1, covid_wave_2, covid_wave_3, covid_wave_4,school_holiday, teachers_day))
 
 # Prophet model fitting function
 @st.cache
-def fit_model(df, store_code, holidays, channel):
+def fit_model(df, holidays,resample, mode):
     # Initial model set up
     m = Prophet(
         growth='linear',
-        seasonality_mode='multiplicative',
+        seasonality_mode=mode,
         holidays=holidays,
         uncertainty_samples=100,
         daily_seasonality=False
     )
     m.add_country_holidays(country_name='VN')
-    m.train_holiday_names
-    m.add_seasonality('sundays', period=1, prior_scale=10, fourier_order=10, mode='multiplicative', condition_name='is_sunday')
-    m.add_seasonality('mondays', period=1, prior_scale=1.5, fourier_order=10, mode='multiplicative', condition_name='is_monday')
-    m.add_seasonality('tuesdays', period=1, prior_scale=1.5, fourier_order=10, mode='multiplicative', condition_name='is_tuesday')
-    m.add_seasonality('wednesdays', period=1, prior_scale=1.5, fourier_order=10, mode='multiplicative', condition_name='is_wednesday')
-    m.add_seasonality('thursdays', period=1, prior_scale=1.5, fourier_order=10, mode='multiplicative', condition_name='is_thursday')
-    m.add_seasonality('fridays', period=1, prior_scale=1.5, fourier_order=10, mode='multiplicative', condition_name='is_friday')
-    m.add_seasonality('saturday', period=1, prior_scale=5, fourier_order=10, mode='multiplicative', condition_name='is_saturday')
+    if resample == 'H':
+        m.add_seasonality('sundays', period=1, prior_scale=10, fourier_order=15, mode=mode, condition_name='is_sunday')
+        m.add_seasonality('mondays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_monday')
+        m.add_seasonality('tuesdays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_tuesday')
+        m.add_seasonality('wednesdays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_wednesday')
+        m.add_seasonality('thursdays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_thursday')
+        m.add_seasonality('fridays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_friday')
+        m.add_seasonality('saturday', period=1, prior_scale=5, fourier_order=15, mode=mode, condition_name='is_saturday')
 
-    # Preprocess data
-    if channel != 'all':
-        df_test = df[(df.store_code == store_code) & (df.channel == channel)][['datetime','bill_size']]
-    else:
-        df_test = df[(df.store_code == store_code)][['datetime','bill_size']]
-
-    df_test.columns = ['ds','y']
-    df_test['ds'] = pd.to_datetime(df_test['ds'])
-    df_test.set_index('ds',inplace=True)
-    df_hr = df_test.resample('H').sum().reset_index()
-    df_hr_o = df_hr[(df_hr['ds'].dt.hour > 9) & (df_hr['ds'].dt.hour < 22)]
-    df_hr_o = df_hr[df_hr['y'] > 0]
+    df.columns = ['ds','y']
+    df['ds'] = pd.to_datetime(df['ds'])
+    
+    if resample == 'H':
+        df = df[(df['ds'].dt.hour > 9) & (df['ds'].dt.hour < 22)]
+    df = df[df['y'] > 0]
     
     # define seasonality
     def is_sunday(ds):
@@ -157,16 +170,16 @@ def fit_model(df, store_code, holidays, channel):
     def is_saturday(ds):
         date = pd.to_datetime(ds)
         return ds.weekday() == 5
-    df_hr_o['is_sunday'] = df_hr_o['ds'].apply(is_sunday)
-    df_hr_o['is_monday'] = df_hr_o['ds'].apply(is_monday)
-    df_hr_o['is_tuesday'] = df_hr_o['ds'].apply(is_tuesday)
-    df_hr_o['is_wednesday'] = df_hr_o['ds'].apply(is_wednesday)
-    df_hr_o['is_thursday'] = df_hr_o['ds'].apply(is_thursday)
-    df_hr_o['is_friday'] = df_hr_o['ds'].apply(is_friday)
-    df_hr_o['is_saturday'] = df_hr_o['ds'].apply(is_saturday)
+    df['is_sunday'] = df['ds'].apply(is_sunday)
+    df['is_monday'] = df['ds'].apply(is_monday)
+    df['is_tuesday'] = df['ds'].apply(is_tuesday)
+    df['is_wednesday'] = df['ds'].apply(is_wednesday)
+    df['is_thursday'] = df['ds'].apply(is_thursday)
+    df['is_friday'] = df['ds'].apply(is_friday)
+    df['is_saturday'] = df['ds'].apply(is_saturday)
     
     # Fit model
-    m.fit(df_hr_o)
+    m.fit(df)
     return m
 
 @st.cache
@@ -185,7 +198,8 @@ def store_code():
 @st.cache
 def predict_model(m, start,end, freq):
     future = pd.DataFrame({'ds': pd.date_range(start=start, end=end, freq=freq)})
-    future_o = future[(future['ds'].dt.hour > 9) & (future['ds'].dt.hour < 22)]
+    if freq == 'H':
+        future = future[(future['ds'].dt.hour > 9) & (future['ds'].dt.hour < 22)]
 
     # define seasonality
     def is_sunday(ds):
@@ -210,15 +224,15 @@ def predict_model(m, start,end, freq):
         date = pd.to_datetime(ds)
         return ds.weekday() == 5
 
-    future_o['is_sunday'] = future_o['ds'].apply(is_sunday)
-    future_o['is_monday'] = future_o['ds'].apply(is_monday)
-    future_o['is_tuesday'] = future_o['ds'].apply(is_tuesday)
-    future_o['is_wednesday'] = future_o['ds'].apply(is_wednesday)
-    future_o['is_thursday'] = future_o['ds'].apply(is_thursday)
-    future_o['is_friday'] = future_o['ds'].apply(is_friday)
-    future_o['is_saturday'] = future_o['ds'].apply(is_saturday)
-
-    forecast = m.predict(future_o)
+    future['is_sunday'] = future['ds'].apply(is_sunday)
+    future['is_monday'] = future['ds'].apply(is_monday)
+    future['is_tuesday'] = future['ds'].apply(is_tuesday)
+    future['is_wednesday'] = future['ds'].apply(is_wednesday)
+    future['is_thursday'] = future['ds'].apply(is_thursday)
+    future['is_friday'] = future['ds'].apply(is_friday)
+    future['is_saturday'] = future['ds'].apply(is_saturday)
+    forecast = m.predict(future)
+    #forecast[['yhat_lower','yhat']] = forecast[['yhat_lower','yhat']].clip(lower=0)
     return forecast
 
 # Read Dataset
@@ -308,34 +322,59 @@ select_decompose = st.sidebar.checkbox('Split into Time Series Components')
 
 if select_decompose:
     # Plot seasonal decompose result
-    decompose_result = seasonal_decompose(channels_split_df[df_display],model='additive', extrapolate_trend='freq')
+    decompose_result = seasonal_decompose(channels_split_df[df_display],model='multiplicative10', extrapolate_trend='freq')
     decompose_fig = make_subplots(rows=4, cols=1)
     decompose_fig.add_trace(go.Scatter(x=decompose_result.observed.index,y=decompose_result.observed,name="Observed Data"),row=1, col=1)
     decompose_fig.add_trace(go.Scatter(x=decompose_result.trend.index,y=decompose_result.trend,name="Trend"),row=2, col=1)
     decompose_fig.add_trace(go.Scatter(x=decompose_result.seasonal.index,y=decompose_result.seasonal,name="Seasonality"),row=3,col=1)
     decompose_fig.add_trace(go.Bar(x=decompose_result.resid.index,y=decompose_result.resid,name="Residual"),row=4,col=1)
     decompose_fig.update_layout(height=600)
-    st.plotly_chart(decompose_fig, use_container_width=True)
+    st.sidebar.plotly_chart(decompose_fig, use_container_width=True)
 else:
+    # Set up date-picker
+    forecast_date = st.sidebar.date_input('Select Forecast Range',min_value=channels_split_df[df_display].index.max())
     # Plot normal chart without seasonal decompose
     channels_plot = px.line(channels_split_df[df_display])
     channels_plot.update_layout(height=300)
     st.plotly_chart(channels_plot)
+    
     df_fit = channels_split_df[df_display].reset_index()
-    df_fit = df_fit.rename(columns={'datetime':'ds','bill_size':'y'})
-    #df_fit.datetime = pd.to_datetime(df_fit.datetime)
-    m = Prophet(holidays=holidays,seasonality_mode='multiplicative',uncertainty_samples=100)
-    m.fit(df_fit)
-    future = m.make_future_dataframe(periods=7)
-    forecast = m.predict(future)
-    fig1 = m.plot(forecast)
+    df_fit = df_fit.rename(columns={'datetime':'ds','bill_size':'y_original'})
+    df_fit = df_fit[df_fit['y_original'] > 0]
+    df_fit = df_fit.set_index('ds')
+    df_fit['y'], transform_lambda = boxcox(df_fit['y_original'])
+    st.write(df_fit)
+    dist_plot = make_subplots(rows=2, cols=1)
+    dist_plot.add_trace(go.Histogram(x=df_fit['y']),row=1,col=1)
+    dist_plot.add_trace(go.Histogram(x=df_fit['y_original']), row=2,col=1)
+    st.plotly_chart(dist_plot, use_container_width=True)
+    df_fit = df_fit.reset_index()
+    df_transform = df_fit[['ds','y']]
+
+    fit_m = fit_model(df_transform, holidays, select_resample, 'additive')
+    pred_m = predict_model(fit_m, df_transform['ds'].min(), forecast_date, select_resample)
+
+    fig1 = fit_m.plot(pred_m)
     st.write(fig1)
-    fig2 = m.plot_components(forecast)
+    fig2 = fit_m.plot_components(pred_m)
     st.write(fig2)
-    st.write(forecast)
+    st.write(pred_m)
+    pred_m = pred_m.set_index('ds')
+    pred_m['y_final'] = inv_boxcox(pred_m['yhat'], transform_lambda)
+    st.write(pred_m)
     def mape(actual, forecast):
         mape = abs((actual-forecast)/forecast) * 100
         return mape
-    mape = mape(forecast['yhat'],df_fit['y']).dropna()
-    mape_plot = px.box(mape)
-    fig3=st.plotly_chart(mape_plot,use_container_width=True)
+    def mae(actual, forecast):
+        mae = abs(actual-forecast)
+        return mae
+    pred_m = pred_m.reset_index()
+    st.write(df_fit['y_original'])
+    st.write(pred_m['y_final'].iloc[:len(df_fit)])
+    mape = mape(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
+    mae = mae(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
+    diff_df = pd.DataFrame(data=[df_fit['y_original'],pred_m['y_final']] ).T
+    diff_df['mape'] = diff_df['y_final'].sub(diff_df['y_original']).div(diff_df['y_original']).mul(100)
+    st.write(diff_df)
+    st.write(mape.describe())
+    st.write(mae.describe())
