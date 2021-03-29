@@ -317,51 +317,72 @@ channels_split_df['Delivery - TC'] = resample_tc(select_resample, channels_df['D
 channels_split_df['Delivery - Sales'] = resample_sales(select_resample, channels_df['Delivery'])
 channels_split_df['Delivery - TA'] = resample_ta(select_resample, channels_split_df['Delivery - Sales'], channels_split_df['Delivery - TC'])
 
-df_display = st.sidebar.selectbox('Select dataset to display', list(channels_split_df))
-select_decompose = st.sidebar.checkbox('Split into Time Series Components')
+#df_display = st.sidebar.selectbox('Select dataset to display', list(channels_split_df))
+display_details = st.sidebar.checkbox('display forecast details')
 
-if select_decompose:
-    # Plot seasonal decompose result
-    decompose_result = seasonal_decompose(channels_split_df[df_display],model='multiplicative10', extrapolate_trend='freq')
-    decompose_fig = make_subplots(rows=4, cols=1)
-    decompose_fig.add_trace(go.Scatter(x=decompose_result.observed.index,y=decompose_result.observed,name="Observed Data"),row=1, col=1)
-    decompose_fig.add_trace(go.Scatter(x=decompose_result.trend.index,y=decompose_result.trend,name="Trend"),row=2, col=1)
-    decompose_fig.add_trace(go.Scatter(x=decompose_result.seasonal.index,y=decompose_result.seasonal,name="Seasonality"),row=3,col=1)
-    decompose_fig.add_trace(go.Bar(x=decompose_result.resid.index,y=decompose_result.resid,name="Residual"),row=4,col=1)
-    decompose_fig.update_layout(height=600)
-    st.sidebar.plotly_chart(decompose_fig, use_container_width=True)
-else:
-    # Set up date-picker
-    forecast_date = st.sidebar.date_input('Select Forecast Range',min_value=channels_split_df[df_display].index.max())
-    # Plot normal chart without seasonal decompose
-    channels_plot = px.line(channels_split_df[df_display])
-    channels_plot.update_layout(height=300)
-    st.plotly_chart(channels_plot)
-    
+# Set up date-picker
+forecast_date = st.sidebar.date_input('Select Forecast Range',min_value=channels_split_df['Dinein - Sales'].index.max())
+
+# Setting up sales Forecast by channel, by TC, by TA
+df = {}
+df_full = pd.DataFrame()
+for df_display in list(channels_split_df):
+
+    # Preprocess and transform dataframe
     df_fit = channels_split_df[df_display].reset_index()
     df_fit = df_fit.rename(columns={'datetime':'ds','bill_size':'y_original'})
     df_fit = df_fit[df_fit['y_original'] > 0]
     df_fit = df_fit.set_index('ds')
     df_fit['y'], transform_lambda = boxcox(df_fit['y_original'])
+    
+    # Get dataframe ready to fit Prophet
+    df_fit = df_fit.reset_index()
+    df_transform = df_fit[['ds','y']]
+
+    # Fit and predict using Prophet Model
+    fit_m = fit_model(df_transform, holidays, select_resample, 'additive')
+    pred_m = predict_model(fit_m, forecast_date , forecast_date + datetime.timedelta(days=1), select_resample)
+
+    pred_m = pred_m.set_index('ds')
+    pred_m[['yhat_lower_f','yhat_upper_f','y_final']] = inv_boxcox(pred_m[['yhat_lower','yhat_upper','yhat']], transform_lambda)
+
+    # Setup empty dataframe for future merge
+    df_full['ds'] = pred_m.index
+    df_full = df_full.set_index('ds')
+
+    df['{}'.format(df_display)] = pred_m[['yhat_lower_f','yhat_upper_f','y_final']]
+    df['{}'.format(df_display)].columns = [['{}_y_lower'.format(df_display), '{}_y_upper'.format(df_display), '{}_y_final'.format(df_display)]]
+    df_full = pd.concat([df_full, df['{}'.format(df_display)]],axis=1)
+
+sales_col_opt = df_full.filter(like='Sales_y_final')
+sales_col_opt.columns = ['Dinein','Pickup','Delivery']
+sales_col_opt['Total Sales'] = sales_col_opt.sum(axis=1)
+plt_sales = px.line(sales_col_opt,x=sales_col_opt.index, y='Total Sales')
+st.plotly_chart(plt_sales,use_container_width=True)
+
+st.write('Total Sales of the day is: ',sales_col_opt['Total Sales'].sum())
+if display_details:
+
+    # Plot normal chart without seasonal decompose
+    channels_plot = px.line(channels_split_df[df_display])
+    channels_plot.update_layout(height=300)
+    st.plotly_chart(channels_plot)
+    
     st.write(df_fit)
+    
+    # Display data distribution before and after transformation
     dist_plot = make_subplots(rows=2, cols=1)
     dist_plot.add_trace(go.Histogram(x=df_fit['y']),row=1,col=1)
     dist_plot.add_trace(go.Histogram(x=df_fit['y_original']), row=2,col=1)
     st.plotly_chart(dist_plot, use_container_width=True)
-    df_fit = df_fit.reset_index()
-    df_transform = df_fit[['ds','y']]
 
-    fit_m = fit_model(df_transform, holidays, select_resample, 'additive')
-    pred_m = predict_model(fit_m, df_transform['ds'].min(), forecast_date, select_resample)
-
+    # Display fitting, tends, seasonalities
     fig1 = fit_m.plot(pred_m)
     st.write(fig1)
     fig2 = fit_m.plot_components(pred_m)
     st.write(fig2)
     st.write(pred_m)
-    pred_m = pred_m.set_index('ds')
-    pred_m['y_final'] = inv_boxcox(pred_m['yhat'], transform_lambda)
-    st.write(pred_m)
+
     def mape(actual, forecast):
         mape = abs((actual-forecast)/forecast) * 100
         return mape
@@ -369,8 +390,7 @@ else:
         mae = abs(actual-forecast)
         return mae
     pred_m = pred_m.reset_index()
-    st.write(df_fit['y_original'])
-    st.write(pred_m['y_final'].iloc[:len(df_fit)])
+
     mape = mape(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
     mae = mae(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
     diff_df = pd.DataFrame(data=[df_fit['y_original'],pred_m['y_final']] ).T
