@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from statsmodels.tsa.seasonal import seasonal_decompose
+from col_functions import read_col_files, filtered_data_merged, data_filter, store_code, regression_table
 
 # Define holidays and events
 tet_holiday_2021 = pd.DataFrame({
@@ -182,13 +183,6 @@ def fit_model(df, holidays,resample, mode):
     m.fit(df)
     return m
 
-@st.cache
-def store_code():
-    df = pd.read_excel('./data/Tracking store by year.xls', nrows=100,usecols=['Store Code','Store', 'AC', 'Region','Province','Concept','Opening Date'],parse_dates=['Opening Date'])
-
-    df['full_name'] = df['Store Code'] + '-' + df['Store']
-    return df
-
 #@st.cache
 #def store_code():
 #    store_codes = [os.path.splitext(f)[0] for f in os.listdir('./data/')]
@@ -300,7 +294,8 @@ for channel in channel_list:
 
 # Set up to split and resample df by channels
 channels_split_df = {}
-select_resample = st.sidebar.selectbox('Select Resample Period', ['D','W','M','H','30min'])
+select_resample = 'H'
+#select_resample = st.sidebar.selectbox('Select Resample Period', ['D','W','M','H','30min'])
 
 # Split pickup by TC, sales and TA by resample option
 channels_split_df['Dinein - TC'] = resample_tc(select_resample,channels_df['Dinein'])
@@ -359,8 +354,9 @@ sales_col_opt.columns = ['Dinein','Pickup','Delivery']
 sales_col_opt['Total Sales'] = sales_col_opt.sum(axis=1)
 plt_sales = px.line(sales_col_opt,x=sales_col_opt.index, y='Total Sales')
 st.plotly_chart(plt_sales,use_container_width=True)
+forecast_daily_sales = int(sales_col_opt['Total Sales'].sum())
+st.write('Total Sales of the day is: ', forecast_daily_sales)
 
-st.write('Total Sales of the day is: ',sales_col_opt['Total Sales'].sum())
 if display_details:
 
     # Plot normal chart without seasonal decompose
@@ -398,3 +394,20 @@ if display_details:
     st.write(diff_df)
     st.write(mape.describe())
     st.write(mae.describe())
+
+
+# Obtain COL data from COL_functions
+
+col, trans = read_col_files()
+filtered_data, filtered_trans = data_filter(col, trans, [selected_store])
+df = filtered_data_merged(filtered_data, filtered_trans, store_info).sort_values(by='Date',ascending=False).set_index('Date')
+df = df.iloc[-60:].reset_index()
+df['dis_Date'] = df['Date'].apply(lambda x: x.strftime("%d %b, %Y"))
+spmh_store_plt = px.scatter(df, x='Actual sales',y='Actual SPMH',color='Store Name',trendline='ols', hover_data=['dis_Date'])
+st.plotly_chart(spmh_store_plt)
+regression_table = regression_table(spmh_store_plt, 'Store Name')
+st.write(regression_table)
+forecast_spmh = regression_table.Gradient * forecast_daily_sales + regression_table['y-intercept']
+st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
+manhour_allowed = forecast_daily_sales / forecast_spmh
+st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
