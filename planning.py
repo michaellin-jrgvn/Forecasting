@@ -264,11 +264,11 @@ manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
 
-makers_capacity = 1
-cashiers_capacity = 1
-dispatchers_capacity = 1
-riders_capacity = 2
-oven_capacity = 4
+makers_capacity = 3
+cashiers_capacity = 2
+dispatchers_capacity = 2
+riders_capacity = 4
+oven_capacity = 8
 
 cashier_time = []
 make_time = []
@@ -327,13 +327,13 @@ def boh_process_order(env, makers, oven, i, channel):
             delivery_complete_time = env.now
             # Driver return to store
             yield env.timeout(drive_time)
-        order_await_delivery.append(out_delivery_time-dispatch_end_time)
-        delivery_time.append(delivery_complete_time-out_delivery_time)
-        delivery_return_time.append(env.now-delivery_complete_time)
+        order_await_delivery.insert(i, out_delivery_time-dispatch_end_time)
+        delivery_time.insert(i, delivery_complete_time-out_delivery_time)
+        delivery_return_time.insert(i, env.now-delivery_complete_time)
     else:
-        order_await_delivery.append(0)
-        delivery_time.append(0)
-        delivery_return_time.append(0)
+        order_await_delivery.insert(i, 0)
+        delivery_time.insert(i, 0)
+        delivery_return_time.insert(i, 0)
 
 
 def new_order(env, makers,i, total_order, df_sample):
@@ -346,7 +346,7 @@ def new_order(env, makers,i, total_order, df_sample):
             i+=1
             #print('new order current time now: ',env.now)
         else:
-            yield env.timeout(1)
+            yield env.timeout(1) 
 
 df_sample = df_sim_full[0].copy()
 
