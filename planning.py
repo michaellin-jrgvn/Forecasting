@@ -264,19 +264,13 @@ manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
 
-makers_capacity = 3
-cashiers_capacity = 2
-dispatchers_capacity = 2
-riders_capacity = 4
-oven_capacity = 8
+makers_capacity = 2
+cashiers_capacity = 1
+dispatchers_capacity = 1
+riders_capacity = 3
+oven_capacity = 4
 
-cashier_time = []
-make_time = []
-oven_time = []
-dispatch_time = []
-order_await_delivery = []
-delivery_time = []
-delivery_return_time = []
+time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
 
 def generate_order(i):
     if i <= len(df_sample):
@@ -289,7 +283,7 @@ def cashier(env, cashiers, i):
     with cashiers.request() as request:
         yield request
         yield env.timeout(random.randint(1,3))
-    cashier_time.append(env.now-start_time)
+    time_df.iloc[i]['cashier_time'] = env.now-start_time
 
 def boh_process_order(env, makers, oven, i, channel):
     make_start_time = env.now
@@ -298,7 +292,7 @@ def boh_process_order(env, makers, oven, i, channel):
         #print('Total makers occupied: ', makers.count)
         #print('Order making in process ', i)
         yield env.timeout(random.randint(2,3))
-    make_time.append(env.now-make_start_time)
+    time_df.iloc[i]['make_time'] = env.now-make_start_time
 
     with oven.request() as request:
         oven_start_time = env.now
@@ -306,7 +300,7 @@ def boh_process_order(env, makers, oven, i, channel):
         #print(oven.count)
         #print('Pizza going into the oven')
         yield env.timeout(7)
-    oven_time.append(env.now-oven_start_time)
+    time_df.iloc[i]['oven_time'] = env.now-oven_start_time
 
     with dispatchers.request() as request:
         dispatch_start_time = env.now
@@ -314,10 +308,11 @@ def boh_process_order(env, makers, oven, i, channel):
         #print('cut, pack and dispatch')
         yield env.timeout(2)
         dispatch_end_time = env.now
-    dispatch_time.append(env.now-dispatch_start_time)
+    time_df.iloc[i]['dispatch_time'] = env.now-dispatch_start_time
 
     if channel == 'Delivery':
         with riders.request() as request:
+            random.seed(42)
             drive_time = random.randint(4,10)
             customer_waiting_time = random.randint(3,5)
             yield request
@@ -327,13 +322,13 @@ def boh_process_order(env, makers, oven, i, channel):
             delivery_complete_time = env.now
             # Driver return to store
             yield env.timeout(drive_time)
-        order_await_delivery.insert(i, out_delivery_time-dispatch_end_time)
-        delivery_time.insert(i, delivery_complete_time-out_delivery_time)
-        delivery_return_time.insert(i, env.now-delivery_complete_time)
+        time_df.iloc[i]['order_await_delivery'] = out_delivery_time-dispatch_end_time
+        time_df.iloc[i]['delivery_time'] = delivery_complete_time-out_delivery_time
+        time_df.iloc[i]['delivery_return_time'] = env.now-delivery_complete_time
     else:
-        order_await_delivery.insert(i, 0)
-        delivery_time.insert(i, 0)
-        delivery_return_time.insert(i, 0)
+        time_df.iloc[i]['order_await_delivery'] = 0
+        time_df.iloc[i]['delivery_time'] = 0
+        time_df.iloc[i]['delivery_return_time'] = 0
 
 
 def new_order(env, makers,i, total_order, df_sample):
@@ -380,24 +375,11 @@ st.write('TPMH: ', TPMH)
 st.write('SPMH: ', SPMH)
 st.write(total_manhour)
 
-time_df = pd.DataFrame({
-    'Order Time': df_sample[:]['index'],
-    'Cashier Time': cashier_time,
-    'Make Time': make_time,
-    'Oven Time': oven_time,
-    'Dispatch Time': dispatch_time,
-    'Order Await Delivery': order_await_delivery,
-    'Delivery Time': delivery_time,
-    'Delivery Return Time': delivery_return_time
-})
-
-st.write(time_df)
-
-time_df = time_df.set_index('Order Time')
 time_df_plot = px.area(time_df)
 st.plotly_chart(time_df_plot)
 
 time_df['Total Time'] = time_df.sum(axis=1)
-fail_u30 = time_df[time_df['Total Time'].sub(time_df['Delivery Return Time']) > 30]['Total Time'].count()
+st.write(time_df)
+fail_u30 = time_df[time_df['Total Time'].sub(time_df['delivery_return_time']) > 30]['Total Time'].count()
 u30_hitrate = 1-(fail_u30/total_order)
 st.write('Under 30mins hit rate is: {0:%}'.format(u30_hitrate))
