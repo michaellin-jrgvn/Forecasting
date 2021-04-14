@@ -263,14 +263,14 @@ st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
-
 makers_capacity = 2
-cashiers_capacity = 1
+cashiers_capacity = 2
 dispatchers_capacity = 1
-riders_capacity = 3
+riders_capacity = 4
 oven_capacity = 4
 
 time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
+capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','makers','dispatchers','riders'])
 
 def generate_order(i):
     if i <= len(df_sample):
@@ -278,21 +278,28 @@ def generate_order(i):
         #print('time out value: ', timeout)
     return timeout
 
-def cashier(env, cashiers, i):
-    start_time = env.now
-    with cashiers.request() as request:
-        yield request
-        yield env.timeout(random.randint(1,3))
-    time_df.iloc[i]['cashier_time'] = env.now-start_time
+def cashier(env, cashiers, i, channel):
+    if channel == 'Delivery':
+        time_df.iloc[i]['cashier_time'] = 0
+        capacity_df.iloc[i]['cashiers'] = 0
+    else:
+        start_time = env.now
+        with cashiers.request() as request:
+            yield request
+            capacity_df.iloc[i]['cashiers'] = cashiers.count
+            yield env.timeout(random.randint(1,3))
+        time_df.iloc[i]['cashier_time'] = env.now-start_time
 
 def boh_process_order(env, makers, oven, i, channel):
     make_start_time = env.now
     with makers.request() as request:
         yield request
+        capacity_df.iloc[i]['makers'] = makers.count
         #print('Total makers occupied: ', makers.count)
         #print('Order making in process ', i)
         yield env.timeout(random.randint(2,3))
     time_df.iloc[i]['make_time'] = env.now-make_start_time
+    
 
     with oven.request() as request:
         oven_start_time = env.now
@@ -305,6 +312,7 @@ def boh_process_order(env, makers, oven, i, channel):
     with dispatchers.request() as request:
         dispatch_start_time = env.now
         yield request
+        capacity_df.iloc[i]['dispatchers'] = dispatchers.count
         #print('cut, pack and dispatch')
         yield env.timeout(2)
         dispatch_end_time = env.now
@@ -316,6 +324,7 @@ def boh_process_order(env, makers, oven, i, channel):
             drive_time = random.randint(4,10)
             customer_waiting_time = random.randint(3,5)
             yield request
+            capacity_df.iloc[i]['riders'] = riders.count
             out_delivery_time = env.now
             yield env.timeout(drive_time)
             yield env.timeout(customer_waiting_time)
@@ -325,10 +334,12 @@ def boh_process_order(env, makers, oven, i, channel):
         time_df.iloc[i]['order_await_delivery'] = out_delivery_time-dispatch_end_time
         time_df.iloc[i]['delivery_time'] = delivery_complete_time-out_delivery_time
         time_df.iloc[i]['delivery_return_time'] = env.now-delivery_complete_time
+
     else:
         time_df.iloc[i]['order_await_delivery'] = 0
         time_df.iloc[i]['delivery_time'] = 0
         time_df.iloc[i]['delivery_return_time'] = 0
+        capacity_df.iloc[i]['riders'] = 0
 
 
 def new_order(env, makers,i, total_order, df_sample):
@@ -336,7 +347,7 @@ def new_order(env, makers,i, total_order, df_sample):
         if i < total_order:
             yield env.timeout(generate_order(i))
             channel = df_sample.loc[i,['channel']].values[0]
-            env.process(cashier(env,cashiers,i))
+            env.process(cashier(env,cashiers,i,channel))
             env.process(boh_process_order(env,makers,oven,i,channel))
             i+=1
             #print('new order current time now: ',env.now)
@@ -348,7 +359,6 @@ df_sample = df_sim_full[0].copy()
 df_sample = df_sample.reset_index()
 df_sample['timeout'] = df_sample['index'].diff().dt.seconds.div(60)
 df_sample['timeout'].fillna(0.0,inplace=True)
-st.write(df_sample)
 time = df_sample['timeout'].sum()
 total_order = len(df_sample)
 
@@ -357,16 +367,20 @@ print('Total order: ', total_order)
 env = simpy.Environment()
 i=0
 
-makers = simpy.Resource(env, capacity = makers_capacity)
-cashiers = simpy.Resource(env, capacity = cashiers_capacity)
-oven = simpy.Resource(env, capacity=oven_capacity)
-dispatchers = simpy.Resource(env, capacity=dispatchers_capacity)
-riders = simpy.Resource(env, capacity = riders_capacity)
+for i in range(makers_capacity+1):
+    for j in range(cashiers_capacity+1):
+        for k in range(dispatchers_capacity+1):
+            for l in range(riders_capacity+1):
+                makers = simpy.Resource(env, capacity = i+1)
+                cashiers = simpy.Resource(env, capacity = j+1)
+                oven = simpy.Resource(env, capacity=oven_capacity)
+                dispatchers = simpy.Resource(env, capacity=k+1)
+                riders = simpy.Resource(env, capacity = l+1)
 
-env.process(new_order(env, makers,i, total_order, df_sample))
-print('processing...', env)
-env.run(until=1300)
-print('Simulation completed')
+                env.process(new_order(env, makers,i, total_order, df_sample))
+                print('processing...',i,j,k,l, env)
+                env.run(until=2500)
+                print('Simulation completed')
 
 total_manhour = (makers_capacity+cashiers_capacity+dispatchers_capacity+riders_capacity)*14+16
 TPMH = total_order / total_manhour
@@ -374,6 +388,8 @@ SPMH = df_sample.bill_size.sum() / total_manhour
 st.write('TPMH: ', TPMH)
 st.write('SPMH: ', SPMH)
 st.write(total_manhour)
+
+st.write(capacity_df.resample('H').max())
 
 time_df_plot = px.area(time_df)
 st.plotly_chart(time_df_plot)
