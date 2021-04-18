@@ -263,14 +263,17 @@ st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
-makers_capacity = 2
-cashiers_capacity = 2
-dispatchers_capacity = 1
-riders_capacity = 4
+makers_capacity = 2+1
+cashiers_capacity = 2+1
+riders_capacity = 4+1
 oven_capacity = 4
+dispatchers_capacity = 1+1
+
+scenario = 0
 
 time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
 capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','makers','dispatchers','riders'])
+scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
 
 def generate_order(i):
     if i <= len(df_sample):
@@ -320,7 +323,6 @@ def boh_process_order(env, makers, oven, i, channel):
 
     if channel == 'Delivery':
         with riders.request() as request:
-            random.seed(42)
             drive_time = random.randint(4,10)
             customer_waiting_time = random.randint(3,5)
             yield request
@@ -364,38 +366,58 @@ total_order = len(df_sample)
 
 print('Starting Simulation')
 print('Total order: ', total_order)
-env = simpy.Environment()
-i=0
 
-for i in range(makers_capacity+1):
-    for j in range(cashiers_capacity+1):
-        for k in range(dispatchers_capacity+1):
-            for l in range(riders_capacity+1):
-                makers = simpy.Resource(env, capacity = i+1)
-                cashiers = simpy.Resource(env, capacity = j+1)
+for j in range(1, makers_capacity):
+    for k in range(1, cashiers_capacity):
+        for l in range(1, dispatchers_capacity):
+            for m in range(1, riders_capacity):
+                env = simpy.Environment()
+                i=0
+                makers = simpy.Resource(env, capacity = j)
+                cashiers = simpy.Resource(env, capacity = k)
                 oven = simpy.Resource(env, capacity=oven_capacity)
-                dispatchers = simpy.Resource(env, capacity=k+1)
-                riders = simpy.Resource(env, capacity = l+1)
-
+                dispatchers = simpy.Resource(env, capacity=l)
+                riders = simpy.Resource(env, capacity = m)
                 env.process(new_order(env, makers,i, total_order, df_sample))
-                print('processing...',i,j,k,l, env)
-                env.run(until=2500)
+                print('processing...',j,k,l,m)
+                env.run(until=1300)
                 print('Simulation completed')
 
-total_manhour = (makers_capacity+cashiers_capacity+dispatchers_capacity+riders_capacity)*14+16
-TPMH = total_order / total_manhour
-SPMH = df_sample.bill_size.sum() / total_manhour
-st.write('TPMH: ', TPMH)
-st.write('SPMH: ', SPMH)
-st.write(total_manhour)
+                total_manhour = (j+k+l+m)*14+16
+                TPMH = total_order / total_manhour
+                SPMH = df_sample.bill_size.sum() / total_manhour
+                st.write('TPMH: ', TPMH)
+                st.write('SPMH: ', SPMH)
 
-st.write(capacity_df.resample('H').max())
+                st.write(capacity_df.resample('H').max())
+                st.write(time_df)
+                time_df_plot = px.area(time_df)
+                st.plotly_chart(time_df_plot)
 
-time_df_plot = px.area(time_df)
-st.plotly_chart(time_df_plot)
+                # Determine u14 hitrate
+                u14_df = time_df.copy()
+                u14_df['total_time'] = u14_df[['make_time','oven_time','dispatch_time']].sum(axis=1)
+                fail_u14 = u14_df[u14_df['total_time']> 14]['total_time'].count()
+                u14_hitrate = 1-(fail_u14/total_order)
+                u14_max = u14_df['total_time'].max()
 
-time_df['Total Time'] = time_df.sum(axis=1)
+                # Determine u30 hitrate
+                u30_df = time_df.copy()
+                u30_df['total_time'] = u30_df.sum(axis=1)
+                u30 = u30_df[u30_df['total_time'].sub(u30_df['delivery_return_time']) > 30]['total_time']
+                fail_u30 = u30.count()
+                u30_hitrate = 1-(fail_u30/total_order)
+                u30_max = u30.max()
+                st.write('Under 30mins hit rate is: {0:%}'.format(u30_hitrate))
+
+                scenario_data = pd.DataFrame([[scenario,k,j,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
+                scenario_kpi_df = scenario_kpi_df.append(scenario_data)
+
+                scenario +=1
+
 st.write(time_df)
-fail_u30 = time_df[time_df['Total Time'].sub(time_df['delivery_return_time']) > 30]['Total Time'].count()
-u30_hitrate = 1-(fail_u30/total_order)
-st.write('Under 30mins hit rate is: {0:%}'.format(u30_hitrate))
+st.write(scenario_kpi_df)
+u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate')
+st.plotly_chart(u30_plot,use_container_width=True)
+u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate')
+st.plotly_chart(u14_plot,use_container_width=True)
