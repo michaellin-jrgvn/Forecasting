@@ -367,6 +367,23 @@ total_order = len(df_sample)
 print('Starting Simulation')
 print('Total order: ', total_order)
 
+summary_kpi_container = st.beta_container()
+col1,col2 = summary_kpi_container.beta_columns(2)
+
+class MonitoredResource(simpy.Resource):
+     def __init__(self, *args, **kwargs):
+         super().__init__(*args, **kwargs)
+         self.data = []
+
+     def request(self, *args, **kwargs):
+         self.data.append((self._env.now, len(self.queue)))
+         print(self._env.now)
+         return super().request(*args, **kwargs)
+
+     def release(self, *args, **kwargs):
+         self.data.append((self._env.now, len(self.queue)))
+         return super().release(*args, **kwargs)
+
 # Iterate through the capacities of resources
 
 for j in range(1, makers_capacity):
@@ -380,6 +397,8 @@ for j in range(1, makers_capacity):
                 oven = simpy.Resource(env, capacity=oven_capacity)
                 dispatchers = simpy.Resource(env, capacity=l)
                 riders = simpy.Resource(env, capacity = m)
+                res = MonitoredResource(env, j)
+                st.write(res.data)
                 env.process(new_order(env, makers,i, total_order, df_sample))
                 print('processing...',j,k,l,m)
                 env.run(until=1300)
@@ -388,13 +407,6 @@ for j in range(1, makers_capacity):
                 total_manhour = (j+k+l+m)*14+16
                 TPMH = total_order / total_manhour
                 SPMH = df_sample.bill_size.sum() / total_manhour
-                st.write('TPMH: ', TPMH)
-                st.write('SPMH: ', SPMH)
-
-                st.write(capacity_df.resample('H').max())
-                st.write(time_df)
-                time_df_plot = px.area(time_df)
-                st.plotly_chart(time_df_plot)
 
                 # Determine u14 hitrate
                 u14_df = time_df.copy()
@@ -410,17 +422,21 @@ for j in range(1, makers_capacity):
                 fail_u30 = u30.count()
                 u30_hitrate = 1-(fail_u30/total_order)
                 u30_max = u30.max()
-                st.write('Under 30mins hit rate is: {0:%}'.format(u30_hitrate))
 
                 # Insert data to dataframe
                 scenario_data = pd.DataFrame([[scenario,k,j,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
                 scenario_kpi_df = scenario_kpi_df.append(scenario_data)
+                
+                with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
+                    time_df_plot = px.area(time_df)
+                    st.plotly_chart(time_df_plot)
 
                 scenario +=1
 
 st.write(time_df)
 st.write(scenario_kpi_df)
 u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate')
-st.plotly_chart(u30_plot,use_container_width=True)
+col1.plotly_chart(u30_plot,use_container_width=True)
 u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate')
-st.plotly_chart(u14_plot,use_container_width=True)
+col2.plotly_chart(u14_plot,use_container_width=True)
+
