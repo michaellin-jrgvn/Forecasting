@@ -265,7 +265,7 @@ st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
 makers_capacity = 2+1
 cashiers_capacity = 2+1
-riders_capacity = 4+1
+riders_capacity = 6+1
 oven_capacity = 4
 dispatchers_capacity = 1+1
 
@@ -367,6 +367,8 @@ total_order = len(df_sample)
 print('Starting Simulation')
 print('Total order: ', total_order)
 
+# Iterate through the capacities of resources
+
 for j in range(1, makers_capacity):
     for k in range(1, cashiers_capacity):
         for l in range(1, dispatchers_capacity):
@@ -410,6 +412,7 @@ for j in range(1, makers_capacity):
                 u30_max = u30.max()
                 st.write('Under 30mins hit rate is: {0:%}'.format(u30_hitrate))
 
+                # Insert data to dataframe
                 scenario_data = pd.DataFrame([[scenario,k,j,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
                 scenario_kpi_df = scenario_kpi_df.append(scenario_data)
 
