@@ -23,6 +23,9 @@ import random
 
 import simpy
 
+np.random.seed(42)
+random.seed(42)
+
 # Read Dataset
 @st.cache
 def read_file(store_code):
@@ -275,6 +278,7 @@ time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make
 capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','makers','dispatchers','riders'])
 scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
 
+
 def generate_order(i):
     if i <= len(df_sample):
         timeout = df_sample.loc[i,['timeout']].values[0]
@@ -343,7 +347,6 @@ def boh_process_order(env, makers, oven, i, channel):
         time_df.iloc[i]['delivery_return_time'] = 0
         capacity_df.iloc[i]['riders'] = 0
 
-
 def new_order(env, makers,i, total_order, df_sample):
     while True:
         if i < total_order:
@@ -397,8 +400,8 @@ for j in range(1, makers_capacity):
                 oven = simpy.Resource(env, capacity=oven_capacity)
                 dispatchers = simpy.Resource(env, capacity=l)
                 riders = simpy.Resource(env, capacity = m)
-                res = MonitoredResource(env, j)
-                st.write(res.data)
+                #res = MonitoredResource(env, j)
+                #st.write(res.data)
                 env.process(new_order(env, makers,i, total_order, df_sample))
                 print('processing...',j,k,l,m)
                 env.run(until=1300)
@@ -419,6 +422,7 @@ for j in range(1, makers_capacity):
                 u30_df = time_df.copy()
                 u30_df['total_time'] = u30_df.sum(axis=1)
                 u30 = u30_df[u30_df['total_time'].sub(u30_df['delivery_return_time']) > 30]['total_time']
+                u30 = u30.fillna(0)
                 fail_u30 = u30.count()
                 u30_hitrate = 1-(fail_u30/total_order)
                 u30_max = u30.max()
@@ -426,7 +430,10 @@ for j in range(1, makers_capacity):
                 # Insert data to dataframe
                 scenario_data = pd.DataFrame([[scenario,k,j,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
                 scenario_kpi_df = scenario_kpi_df.append(scenario_data)
-                
+                scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.85)
+                scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.85)
+                scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
+
                 with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
                     time_df_plot = px.area(time_df)
                     st.plotly_chart(time_df_plot)
@@ -439,4 +446,6 @@ u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate')
 col1.plotly_chart(u30_plot,use_container_width=True)
 u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate')
 col2.plotly_chart(u14_plot,use_container_width=True)
+
+
 
