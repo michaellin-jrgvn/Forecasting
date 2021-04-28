@@ -269,11 +269,11 @@ st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
-makers_capacity = 2+1
+makers_capacity = 3+1
 cashiers_capacity = 2+1
 riders_capacity = 6+1
 oven_capacity = 4
-dispatchers_capacity = 2+1
+dispatchers_capacity = 1+1
 
 summary_kpi_container = st.beta_container()
 col1,col2 = summary_kpi_container.beta_columns(2)
@@ -435,8 +435,8 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                     # Insert data to dataframe
                     scenario_data = pd.DataFrame([[scenario,k,j,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
                     scenario_kpi_df = scenario_kpi_df.append(scenario_data)
-                    scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.85)
-                    scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.85)
+                    scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.9)
+                    scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.9)
                     scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
                     scenario_df[scenario] = time_df
                     
@@ -460,8 +460,8 @@ u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scen
 col2.plotly_chart(u14_plot,use_container_width=True)
 
 scaler = MinMaxScaler()
-scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 max trans','SPMH trans']] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate','u30 max','u14 hitrate','u14 max','SPMH']])
-scenario_kpi_df[['optimum score']] = scenario_kpi_df['u30 hitrate trans']-scenario_kpi_df['u30 max trans'] + scenario_kpi_df['u14 hitrate trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.2
+scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 max trans','SPMH trans','u30 abs var trans','u14 abs var trans']] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate','u30 max','u14 hitrate','u14 max','SPMH', 'u30 absolute var','u14 absolute var']])
+scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.5
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
 st.subheader('Recommended Capcity Arrangements:')
 st.write(scenario_kpi_df[['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
