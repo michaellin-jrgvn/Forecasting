@@ -413,7 +413,7 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                     env.run(until=1300)
                     print('Simulation completed')
 
-                    total_manhour = (j+k+l+m)*14+16
+                    total_manhour = (j+k+l+m)*14+16+8
                     TPMH = total_order / total_manhour
                     SPMH = df_sample.bill_size.sum() / total_manhour
 
