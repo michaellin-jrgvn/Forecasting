@@ -273,7 +273,7 @@ makers_capacity = 3+1
 cashiers_capacity = 2+1
 riders_capacity = 6+1
 oven_capacity = 4
-dispatchers_capacity = 1+1
+dispatchers_capacity = 2+1
 
 summary_kpi_container = st.beta_container()
 col1,col2 = summary_kpi_container.beta_columns(2)
@@ -473,7 +473,8 @@ time_df_plot = px.area(optimal_details)
 st.plotly_chart(time_df_plot)
 
 occupancy_30m = scenario_df[optimal.scenario].resample('30min').sum() / 30
+manpower_requirement = occupancy_30m[['cashier_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
 make_occupancy = 100 * occupancy_30m['make_time'] / makers_capacity
-st.write(occupancy_30m)
-occupancy_30m_plt = px.area(occupancy_30m)
+st.write(manpower_requirement)
+occupancy_30m_plt = px.area(manpower_requirement)
 st.plotly_chart(occupancy_30m_plt)
