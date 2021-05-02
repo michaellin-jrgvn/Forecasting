@@ -18,6 +18,7 @@ from plotly.subplots import make_subplots
 from statsmodels.tsa.seasonal import seasonal_decompose
 from col_functions import read_col_files, filtered_data_merged, data_filter, store_code, regression_table
 from prophet_model import fit_model, predict_model
+from optimization import optimize_labour
 
 from sklearn.preprocessing import MinMaxScaler
 
@@ -474,7 +475,33 @@ st.plotly_chart(time_df_plot)
 
 occupancy_30m = scenario_df[optimal.scenario].resample('30min').sum() / 30
 manpower_requirement = occupancy_30m[['cashier_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
+manpower_requirement['rider_time'] = manpower_requirement['delivery_time'] + manpower_requirement['delivery_return_time']
+manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time'],axis=1)
 make_occupancy = 100 * occupancy_30m['make_time'] / makers_capacity
+
+# Set ceiling of each column equal to the optimal manpower requirement
+manpower_requirement['make_time'] = manpower_requirement['make_time'].clip(0,scenario_kpi_df.iloc[0,:]['makers'])
+manpower_requirement['cashier_time'] = manpower_requirement['cashier_time'].clip(0,scenario_kpi_df.iloc[0,:]['cashiers'])
+manpower_requirement['dispatch_time'] = manpower_requirement['dispatch_time'].clip(0,scenario_kpi_df.iloc[0,:]['dispatchers'])
+manpower_requirement['rider_time'] = manpower_requirement['rider_time'].clip(0,scenario_kpi_df.iloc[0,:]['riders'])
+
 st.write(manpower_requirement)
 occupancy_30m_plt = px.area(manpower_requirement)
 st.plotly_chart(occupancy_30m_plt)
+
+# Preprocess dataframe ready for roster optimization
+# Shifting time index by -60mins for roster to cater for TM preparation (30mins), ready for demand (30mins)
+roster_df = manpower_requirement.shift(periods=-30,freq='min')
+# factorize all requirement by 80% to prevent overstaffing
+# roster_df = roster_df * 0.8
+
+
+st.write(roster_df)
+make_roster = optimize_labour(roster_df, 'make_time')
+rider_roster = optimize_labour(roster_df,'rider_time')
+cashier_roster = optimize_labour(roster_df,'cashier_time')
+dispatcher_roster = optimize_labour(roster_df,'dispatch_time')
+merged_roster = pd.concat([cashier_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
+st.write(merged_roster)
+final_TPMH = merged_roster.sum() * 4
+st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_TPMH.sum() +16+8),0))
