@@ -273,34 +273,21 @@ st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 makers_capacity = 3+1
 cashiers_capacity = 2+1
 riders_capacity = 6+1
-oven_capacity = 4
+oven_capacity = 8
 dispatchers_capacity = 2+1
+csr_capacity = 2+1
 
 summary_kpi_container = st.beta_container()
 col1,col2 = summary_kpi_container.beta_columns(2)
 
-class MonitoredResource(simpy.Resource):
-     def __init__(self, *args, **kwargs):
-         super().__init__(*args, **kwargs)
-         self.data = []
-
-     def request(self, *args, **kwargs):
-         self.data.append((self._env.now, len(self.queue)))
-         print(self._env.now)
-         return super().request(*args, **kwargs)
-
-     def release(self, *args, **kwargs):
-         self.data.append((self._env.now, len(self.queue)))
-         return super().release(*args, **kwargs)
-
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity):
+def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity):
     scenario = 0
     random.seed(42)
-    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
-    capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','makers','dispatchers','riders'])
-    scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
+    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
+    capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','csr','makers','dispatchers','riders'])
+    scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
     scenario_df = {}
     def generate_order(i):
         if i <= len(df_sample):
@@ -330,12 +317,9 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
             yield env.timeout(random.randint(2,3))
         time_df.iloc[i]['make_time'] = env.now-make_start_time
         
-
         with oven.request() as request:
             oven_start_time = env.now
             yield request
-            #print(oven.count)
-            #print('Pizza going into the oven')
             yield env.timeout(7)
         time_df.iloc[i]['oven_time'] = env.now-oven_start_time
 
@@ -369,16 +353,40 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
             time_df.iloc[i]['delivery_time'] = 0
             time_df.iloc[i]['delivery_return_time'] = 0
             capacity_df.iloc[i]['riders'] = 0
+    
+    def foh_order(env, csr, cashiers, i, channel):
+        if channel == 'Dinein':
+            foh_service_time = env.now
+            with csr.request() as request:
+                busing_time = 1
+                yield request
+                capacity_df.iloc[i]['csr'] = csr.count
+                yield env.timeout(busing_time)
+            time_df.iloc[i]['foh_dinein_dispatch_time'] = env.now - foh_service_time
+            time_df.iloc[i]['foch_pickup_dispatch_time'] = 0
+        elif channel == 'Pickup':
+            foh_pickup_dispatch = env.now
+            with cashiers.request() as request:
+                foh_dispatch = random.randint(1,2)
+                yield request
+                capacity_df.iloc[i]['cashiers'] = cashiers.count
+                yield env.timeout(foh_dispatch)
+            time_df.iloc[i]['foh_pickup_dispatch_time'] = env.now - foh_pickup_dispatch
+            time_df.iloc[i]['foh_dinein_dispatch_time'] = 0
+        else:
+            time_df.iloc[i]['foh_pickup_dispatch_time'] = 0
+            time_df.iloc[i]['foh_dinein_dispatch_time'] = 0         
 
-    def new_order(env, makers,i, total_order, df_sample):
+    def new_order(env, makers,i, total_order, df_sample,cashiers,csr):
         while True:
             if i < total_order:
                 yield env.timeout(generate_order(i))
                 channel = df_sample.loc[i,['channel']].values[0]
                 env.process(cashier(env,cashiers,i,channel))
                 env.process(boh_process_order(env,makers,oven,i,channel))
+                env.process(foh_order(env,csr,cashiers,i,channel))
                 i+=1
-                #print('new order current time now: ',env.now)
+
             else:
                 yield env.timeout(1) 
 
@@ -398,57 +406,58 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
         for k in range(1, cashiers_capacity):
             for l in range(1, dispatchers_capacity):
                 for m in range(1, riders_capacity):
+                    for n in range(1, csr_capacity):
+                        # Create simulation enviornment and define resources capacities
+                        env = simpy.Environment()
+                        i=0
+                        makers = simpy.Resource(env, capacity = j)
+                        cashiers = simpy.Resource(env, capacity = k)
+                        oven = simpy.Resource(env, capacity=oven_capacity)
+                        dispatchers = simpy.Resource(env, capacity=l)
+                        riders = simpy.Resource(env, capacity = m)
+                        csr = simpy.Resource(env, capacity = n)
+                        #res = MonitoredResource(env, j)
+                        #st.write(res.data)
+                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr))
+                        print('processing...',j,k,l,m,n)
+                        env.run(until=1300)
+                        print('Simulation completed')
 
-                    # Create simulation enviornment and define resources capacities
-                    env = simpy.Environment()
-                    i=0
-                    makers = simpy.Resource(env, capacity = j)
-                    cashiers = simpy.Resource(env, capacity = k)
-                    oven = simpy.Resource(env, capacity=oven_capacity)
-                    dispatchers = simpy.Resource(env, capacity=l)
-                    riders = simpy.Resource(env, capacity = m)
-                    #res = MonitoredResource(env, j)
-                    #st.write(res.data)
-                    env.process(new_order(env, makers,i, total_order, df_sample))
-                    print('processing...',j,k,l,m)
-                    env.run(until=1300)
-                    print('Simulation completed')
+                        total_manhour = (j+k+l+m+n)*14+16+8
+                        TPMH = total_order / total_manhour
+                        SPMH = df_sample.bill_size.sum() / total_manhour
 
-                    total_manhour = (j+k+l+m)*14+16+8
-                    TPMH = total_order / total_manhour
-                    SPMH = df_sample.bill_size.sum() / total_manhour
+                        # Determine u14 hitrate
+                        u14_df = time_df.copy()
+                        u14_df['total_time'] = u14_df[['make_time','oven_time','dispatch_time']].sum(axis=1)
+                        fail_u14 = u14_df[u14_df['total_time']> 14]['total_time'].count()
+                        u14_hitrate = round(1-(fail_u14/total_order),2)
+                        u14_max = u14_df['total_time'].max()
 
-                    # Determine u14 hitrate
-                    u14_df = time_df.copy()
-                    u14_df['total_time'] = u14_df[['make_time','oven_time','dispatch_time']].sum(axis=1)
-                    fail_u14 = u14_df[u14_df['total_time']> 14]['total_time'].count()
-                    u14_hitrate = round(1-(fail_u14/total_order),2)
-                    u14_max = u14_df['total_time'].max()
+                        # Determine u30 hitrate
+                        deli_df = time_df[time_df['delivery_time']>0]
+                        total_deli_order = len(deli_df)
+                        deli_df['total_time'] = deli_df.sum(axis=1)
+                        pass_u30 = deli_df[deli_df['total_time'].sub(deli_df['delivery_return_time']) <= 30]['total_time'].count()
+                        u30_hitrate = round((pass_u30/total_deli_order),2)
+                        u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
 
-                    # Determine u30 hitrate
-                    deli_df = time_df[time_df['delivery_time']>0]
-                    total_deli_order = len(deli_df)
-                    deli_df['total_time'] = deli_df.sum(axis=1)
-                    pass_u30 = deli_df[deli_df['total_time'].sub(deli_df['delivery_return_time']) <= 30]['total_time'].count()
-                    u30_hitrate = round((pass_u30/total_deli_order),2)
-                    u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
+                        # Insert data to dataframe
+                        scenario_data = pd.DataFrame([[scenario,k,j,l,m,n,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','csr','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
+                        scenario_kpi_df = scenario_kpi_df.append(scenario_data)
+                        scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.9)
+                        scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.9)
+                        scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
+                        scenario_df[scenario] = time_df
+                        
+                        #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
+                        #    time_df_plot = px.area(time_df)
+                        #    st.plotly_chart(time_df_plot)
 
-                    # Insert data to dataframe
-                    scenario_data = pd.DataFrame([[scenario,k,j,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
-                    scenario_kpi_df = scenario_kpi_df.append(scenario_data)
-                    scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.9)
-                    scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.9)
-                    scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
-                    scenario_df[scenario] = time_df
-                    
-                    #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
-                    #    time_df_plot = px.area(time_df)
-                    #    st.plotly_chart(time_df_plot)
-
-                    scenario +=1
+                        scenario +=1
     return scenario_df, scenario_kpi_df
 
-scenario_df, scenario_kpi_df = run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity)
+scenario_df, scenario_kpi_df = run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
