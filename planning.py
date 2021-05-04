@@ -214,6 +214,15 @@ sim_sum_hist = px.histogram(df_sim_sum, x='bill_size')
 st.plotly_chart(plt_sales, use_container_width=True)
 st.plotly_chart(sim_sum_hist, use_container_width=True)
 
+##### ADD UPLOAD FILE TO REPLACE DF_SIM_FULL FOR SIMULATION ###########
+file = st.sidebar.file_uploader('upload your file for simulation',type=['xlsx','csv'])
+file_df = pd.read_csv(file, parse_dates=['datetime'])
+file_df = file_df.rename(columns={'datetime':'index'})
+file_df = file_df[['index','bill_size','channel']].set_index('index')
+file_df = file_df[(file_df.index > '2021-03-31') & (file_df.index <= '2021-03-31 22:00')]
+st.write(file_df)
+st.write(df_sim_full[0])
+
 if display_details:
 
     # Plot normal chart without seasonal decompose
@@ -271,8 +280,8 @@ st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
 makers_capacity = 3+1
 cashiers_capacity = 2+1
-riders_capacity = 6+1
-oven_capacity = 4
+riders_capacity = 8+1
+oven_capacity = 8
 dispatchers_capacity = 2+1
 
 summary_kpi_container = st.beta_container()
@@ -297,8 +306,18 @@ class MonitoredResource(simpy.Resource):
 def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity):
     scenario = 0
     random.seed(42)
-    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
-    capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','makers','dispatchers','riders'])
+
+    ###### Use sales forecast simulation 0 for process simulation (This one will need improvement) #####
+    if file:
+        df_sample = file_df
+        print('using historical data')
+        time_df = pd.DataFrame(index=file_df.index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
+        capacity_df = pd.DataFrame(index=file_df.index, columns=['cashiers','makers','dispatchers','riders'])
+    else:
+        df_sample = df_sim_full[0].copy()
+        time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','order_await_delivery','delivery_time','delivery_return_time'])
+        capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','makers','dispatchers','riders'])
+
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
     scenario_df = {}
     def generate_order(i):
@@ -381,9 +400,6 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
             else:
                 yield env.timeout(1) 
 
-    ###### Use sales forecast simulation 0 for process simulation (This one will need improvement) #####
-    df_sample = df_sim_full[0].copy()
-
     df_sample = df_sample.reset_index()
     df_sample['timeout'] = df_sample['index'].diff().dt.seconds.div(60)
     df_sample['timeout'].fillna(0.0,inplace=True)
@@ -464,7 +480,7 @@ scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 ma
 scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.5
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
 st.subheader('Recommended Capcity Arrangements:')
-st.write(scenario_kpi_df[['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
+st.write(scenario_kpi_df[['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(10))
 
 optimal = scenario_kpi_df.iloc[0,:]
 optimal_details = scenario_df[optimal.scenario]
