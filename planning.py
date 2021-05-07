@@ -220,7 +220,7 @@ file = st.sidebar.file_uploader('upload your file for simulation',type=['xlsx','
 file_df = pd.read_csv(file, parse_dates=['datetime'])
 file_df = file_df.rename(columns={'datetime':'index'})
 file_df = file_df[['index','bill_size','channel']].set_index('index')
-file_df = file_df[(file_df.index > '2021-03-31') & (file_df.index <= '2021-03-31 22:00')]
+file_df = file_df[(file_df.index > '2021-04-02') & (file_df.index <= '2021-04-02 23:59')]
 st.write(file_df)
 st.write(df_sim_full[0])
 
@@ -245,7 +245,6 @@ if display_details:
     fig2 = fit_m.plot_components(pred_m)
     st.write(fig2)
     st.write(pred_m)
-
     def mape(actual, forecast):
         mape = abs((actual-forecast)/forecast) * 100
         return mape
@@ -530,4 +529,4 @@ dispatcher_roster = optimize_labour(roster_df,'dispatch_time')
 merged_roster = pd.concat([cashier_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
 st.write(merged_roster)
 final_TPMH = merged_roster.sum() * 4
-st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_TPMH.sum() +16+8),0))
+st.write('Final SPMH based on roster: ',round(file_df.bill_size.sum()/(final_TPMH.sum() +16+8),0))
