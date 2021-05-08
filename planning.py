@@ -469,28 +469,33 @@ col1.plotly_chart(u30_plot,use_container_width=True)
 u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scenario','u14 max','u30 hitrate','u30 max'])
 col2.plotly_chart(u14_plot,use_container_width=True)
 
+# Use minmax scaler to normalize all variable to determine the optimum capacity arrangement
 scaler = MinMaxScaler()
 scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 max trans','SPMH trans','u30 abs var trans','u14 abs var trans']] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate','u30 max','u14 hitrate','u14 max','SPMH', 'u30 absolute var','u14 absolute var']])
 scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.5
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
 st.subheader('Recommended Capcity Arrangements:')
-st.write(scenario_kpi_df[['scenario','cashiers','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
+st.write(scenario_kpi_df[['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
 
+# set optimal arrnagement the first line of the dataframe
 optimal = scenario_kpi_df.iloc[0,:]
 optimal_details = scenario_df[optimal.scenario]
 
+# plot simulation time chart at optimal level
 time_df_plot = px.area(optimal_details)
 st.plotly_chart(time_df_plot)
 
+# Resample the scenario into 30mins timeframe and determine the manpower requirement in every 30mins
 occupancy_30m = scenario_df[optimal.scenario].resample('30min').sum() / 30
-manpower_requirement = occupancy_30m[['cashier_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
+manpower_requirement = occupancy_30m[['cashier_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
+manpower_requirement['csr_time'] = manpower_requirement['foh_dinein_dispatch_time'] + manpower_requirement['foh_pickup_dispatch_time']
 manpower_requirement['rider_time'] = manpower_requirement['delivery_time'] + manpower_requirement['delivery_return_time']
-manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time'],axis=1)
-make_occupancy = 100 * occupancy_30m['make_time'] / makers_capacity
+manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time'],axis=1)
 
 # Set ceiling of each column equal to the optimal manpower requirement
 manpower_requirement['make_time'] = manpower_requirement['make_time'].clip(0,scenario_kpi_df.iloc[0,:]['makers'])
 manpower_requirement['cashier_time'] = manpower_requirement['cashier_time'].clip(0,scenario_kpi_df.iloc[0,:]['cashiers'])
+manpower_requirement['csr_time'] = manpower_requirement['csr_time'].clip(0,scenario_kpi_df.iloc[0,:]['csr'])
 manpower_requirement['dispatch_time'] = manpower_requirement['dispatch_time'].clip(0,scenario_kpi_df.iloc[0,:]['dispatchers'])
 manpower_requirement['rider_time'] = manpower_requirement['rider_time'].clip(0,scenario_kpi_df.iloc[0,:]['riders'])
 
@@ -510,7 +515,9 @@ make_roster = optimize_labour(roster_df, 'make_time')
 rider_roster = optimize_labour(roster_df,'rider_time')
 cashier_roster = optimize_labour(roster_df,'cashier_time')
 dispatcher_roster = optimize_labour(roster_df,'dispatch_time')
-merged_roster = pd.concat([cashier_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
+csr_roster = optimize_labour(roster_df,'csr_time')
+merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
 st.write(merged_roster)
-final_TPMH = merged_roster.sum() * 4
+hours_per_shift = 4
+final_TPMH = merged_roster.sum() * hours_per_shift
 st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_TPMH.sum() +16+8),0))
