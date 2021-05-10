@@ -508,16 +508,22 @@ st.plotly_chart(occupancy_30m_plt)
 roster_df = manpower_requirement.shift(periods=-30,freq='min')
 # factorize all requirement by 80% to prevent overstaffing
 # roster_df = roster_df * 0.8
-
-
 st.write(roster_df)
-make_roster = optimize_labour(roster_df, 'make_time')
-rider_roster = optimize_labour(roster_df,'rider_time')
-cashier_roster = optimize_labour(roster_df,'cashier_time')
-dispatcher_roster = optimize_labour(roster_df,'dispatch_time')
-csr_roster = optimize_labour(roster_df,'csr_time')
+
+# Run Linear Programming on each station
+make_roster, make_schedule = optimize_labour(roster_df, 'make_time')
+rider_roster, rider_schedule = optimize_labour(roster_df,'rider_time')
+cashier_roster, cashier_schedule = optimize_labour(roster_df,'cashier_time')
+dispatcher_roster, dispatcher_schedule = optimize_labour(roster_df,'dispatch_time')
+csr_roster, csr_schedule = optimize_labour(roster_df,'csr_time')
 merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
 st.write(merged_roster)
+merged_schedule = pd.concat([make_schedule,rider_schedule,cashier_schedule,dispatcher_schedule,csr_schedule])
+merged_schedule.reset_index(drop=True, inplace=True)
+st.write(merged_schedule)
+schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
+st.plotly_chart(schedule_plt)
 hours_per_shift = 4
-final_TPMH = merged_roster.sum() * hours_per_shift
-st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_TPMH.sum() +16+8),0))
+final_MH = merged_roster.sum() * hours_per_shift
+st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum() +16+8),0))
+st.write('Total hours arranged: ', final_MH.sum()+16+8)

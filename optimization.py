@@ -1,5 +1,7 @@
 import pulp as pl
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 
 def optimize_labour(ds, resource):
     # Initiate class
@@ -8,7 +10,6 @@ def optimize_labour(ds, resource):
 
     # Define Decision variables
     x = pl.LpVariable.dicts('', time_slot, lowBound=0, cat='Integer')
-    print(len(x))
 
     # Define Objective function
     model += pl.lpSum(x[i] for i in time_slot)
@@ -45,6 +46,7 @@ def optimize_labour(ds, resource):
 
     print('Status',pl.LpStatus[model.status])
 
+    # Create resources dataframe
     df = pd.DataFrame([v.name,v.varValue] for v in model.variables())
     df[0] = df[0].str.replace('_','').astype('int64')
     df = df.sort_values(by=0,ascending=True)
@@ -53,5 +55,16 @@ def optimize_labour(ds, resource):
     df['time'] = ds.index
     df = df.set_index('time')
 
-    return df
+    # Create roster dataframe
+    shift_hours = 4
+    roster_time = pd.Series(df.index.tolist())
+
+    # Repeat rows based on the resource requirement the particular time in index
+    roster_start_time = roster_time.repeat(df[resource])
+    roster_df = pd.DataFrame()
+    roster_df['start_time'] = roster_start_time
+    roster_df['end_time'] = roster_df.start_time + timedelta(hours=shift_hours)
+    roster_df['resource'] = resource
+
+    return df, roster_df
     
