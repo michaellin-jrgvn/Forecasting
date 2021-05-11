@@ -273,7 +273,7 @@ st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 makers_capacity = 3+1
 cashiers_capacity = 2+1
 riders_capacity = 6+1
-oven_capacity = 8
+oven_capacity = 4
 dispatchers_capacity = 2+1
 csr_capacity = 2+1
 
@@ -518,6 +518,8 @@ dispatcher_roster, dispatcher_schedule = optimize_labour(roster_df,'dispatch_tim
 csr_roster, csr_schedule = optimize_labour(roster_df,'csr_time')
 merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
 st.write(merged_roster)
+
+# Generate roster schedule chart
 merged_schedule = pd.concat([make_schedule,rider_schedule,cashier_schedule,dispatcher_schedule,csr_schedule])
 merged_schedule.reset_index(drop=True, inplace=True)
 st.write(merged_schedule)
@@ -525,5 +527,7 @@ schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time'
 st.plotly_chart(schedule_plt)
 hours_per_shift = 4
 final_MH = merged_roster.sum() * hours_per_shift
+
+# Conclude the final SPMH and MH from optimal schedule
 st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum() +16+8),0))
 st.write('Total hours arranged: ', final_MH.sum()+16+8)
