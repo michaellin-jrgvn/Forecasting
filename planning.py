@@ -399,7 +399,6 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                 env.process(boh_process_order(env,makers,oven,i,channel))
                 env.process(foh_order(env,csr,cashiers,i,channel))
                 i+=1
-
             else:
                 yield env.timeout(1) 
 
@@ -433,7 +432,10 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                         #st.write(res.data)
                         env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr))
                         print('processing...',j,k,l,m,n)
-                        env.run(until=1300)
+                        store_opening_time = 8
+                        store_closing_time = 24
+                        total_opening_hours = (store_closing_time - store_opening_time) * 60
+                        env.run(until=total_opening_hours)
                         print('Simulation completed')
 
                         total_manhour = (j+k+l+m+n)*14+16+8
