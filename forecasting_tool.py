@@ -98,7 +98,7 @@ school_holiday = pd.DataFrame({
     'upper_window': 0,    
 })
 
-holidays = pd.concat((tet_holiday,national_holidays,observance_2020, observance_2019, observance_2018,women_day,v_day, covid_lockdown, school_holiday, teachers_day))
+holidays = pd.concat((tet_holiday,national_holidays,observance_2021,observance_2020, observance_2019, observance_2018,women_day,v_day, covid_lockdown, school_holiday, teachers_day))
 
 # Prophet model fitting function
 @st.cache
