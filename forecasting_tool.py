@@ -310,8 +310,13 @@ with st.sidebar.beta_expander("Forecast Generator Setting", expanded=True):
             store_opening = pd.to_datetime(store_code_func[store_code_func['Store Code'] == store]['Opening Date'])
             if (store_opening < (datetime.date.today() + pd.offsets.DateOffset(years=-1))).bool():
                 df = read_file(store)
+                df.datetime = pd.to_datetime(df.datetime,errors='ignore')
                 try:
-                    past_2018_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-2): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-2)].resample('H').sum()
+                    past_2018_df = df.set_index('datetime')
+                    past_2018_df.index = pd.to_datetime(past_2018_df.index)
+                    start_range = (forecast_date_range[0] + pd.offsets.DateOffset(years=-2)).strftime('%Y-%m-%d %H:%M:%S')
+                    end_range= (forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-2)).strftime('%Y-%m-%d %H:%M:%S')
+                    past_2018_df = past_2018_df.loc[start_range:end_range].resample('H').sum()
                     past_2018_df = past_2018_df['bill_size']
                     past_2018_df = past_2018_df.reset_index()
                     past_2018_df = past_2018_df.rename(columns={'datetime':'ds','bill_size': store})
@@ -320,7 +325,11 @@ with st.sidebar.beta_expander("Forecast Generator Setting", expanded=True):
                     st.warning('No data in 2018')
                     pass
                 try:
-                    past_2019_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(years=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-1)].resample('H').sum()
+                    past_2019_df = df.set_index('datetime')
+                    past_2019_df.index = pd.to_datetime(past_2019_df.index)
+                    start_range = (forecast_date_range[0] + pd.offsets.DateOffset(years=-1)).strftime('%Y-%m-%d %H:%M:%S')
+                    end_range= (forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(years=-1)).strftime('%Y-%m-%d %H:%M:%S')
+                    past_2019_df = past_2019_df.loc[start_range:end_range].resample('H').sum()
                     past_2019_df = past_2019_df['bill_size']
                     past_2019_df = past_2019_df.reset_index()
                     past_2019_df = past_2019_df.rename(columns={'datetime':'ds','bill_size': store})
@@ -328,8 +337,13 @@ with st.sidebar.beta_expander("Forecast Generator Setting", expanded=True):
                 except:
                     st.warning('No data in 2019')
                     pass
+
                 try:
-                    past_lm_df = df.set_index('datetime').loc[forecast_date_range[0] + pd.offsets.DateOffset(months=-1): forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(months=-1)].resample('H').sum()
+                    past_lm_df = df.set_index('datetime')
+                    past_lm_df.index = pd.to_datetime(past_lm_df.index)
+                    start_range = (forecast_date_range[0] + pd.offsets.DateOffset(months=-1)).strftime('%Y-%m-%d %H:%M:%S')
+                    end_range = (forecast_date_range[1] + datetime.timedelta(days=1) + pd.offsets.DateOffset(months=-1)).strftime('%Y-%m-%d %H:%M:%S')
+                    past_lm_df = past_lm_df.loc[start_range:end_range].resample('H').sum()
                     past_lm_df = past_lm_df['bill_size']
                     past_lm_df = past_lm_df.reset_index()
                     past_lm_df = past_lm_df.rename(columns={'datetime':'ds','bill_size': store})
