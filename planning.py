@@ -146,6 +146,7 @@ for df_display in list(channels_split_df):
     df_full = df_full.set_index('ds')
 
     df['{}'.format(df_display)] = pred_m[['yhat_lower_f','yhat_upper_f','y_final']]
+    df['{}'.format(df_display)].fillna(method='ffill',inplace=True)
     df['{}'.format(df_display)] = df['{}'.format(df_display)].rename(columns={'yhat_lower_f':'{}_y_lower'.format(df_display), 'yhat_upper_f':'{}_y_upper'.format(df_display), 'y_final':'{}_y_final'.format(df_display)})
     df_full = pd.concat([df_full, df['{}'.format(df_display)]],axis=1)
 
@@ -163,7 +164,9 @@ def simulation_df(df):
     for channel in channels:
         ## Assign random minutes for each row
         # Preprocessing
+        st.write(df['{} - TC'.format(channel)])
         df['{} - TC'.format(channel)] = df['{} - TC'.format(channel)].round(0).astype('int')
+        st.write(df['{} - TC'.format(channel)])
 
         # Setup to generate random TC using normal distribution
         mu_tc  = np.log(df['{} - TC'.format(channel)][['{} - TC_y_final'.format(channel)]].to_numpy()[:,0])
@@ -295,6 +298,8 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
             #print('time out value: ', timeout)
         return timeout
 
+    ###### set up function to generate routine work #########
+
     def cashier(env, cashiers, i, channel):
         if channel == 'Delivery':
             time_df.iloc[i]['cashier_time'] = 0
@@ -401,6 +406,11 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                 i+=1
             else:
                 yield env.timeout(1) 
+
+    def daily_routine(j):
+        while True:
+            print('hello')
+        
 
     ###### Use sales forecast simulation 0 for process simulation (This one will need improvement) #####
     df_sample = df_sim_full[0].copy()
