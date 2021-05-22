@@ -164,9 +164,7 @@ def simulation_df(df):
     for channel in channels:
         ## Assign random minutes for each row
         # Preprocessing
-        st.write(df['{} - TC'.format(channel)])
         df['{} - TC'.format(channel)] = df['{} - TC'.format(channel)].round(0).astype('int')
-        st.write(df['{} - TC'.format(channel)])
 
         # Setup to generate random TC using normal distribution
         mu_tc  = np.log(df['{} - TC'.format(channel)][['{} - TC_y_final'.format(channel)]].to_numpy()[:,0])
