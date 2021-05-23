@@ -330,7 +330,7 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
             'FOH': ['csr','cashiers'],
             'MOD': ['manager'],
             'MGNT': ['manager'],
-            'ALL': ['manager','makers','dispatchers','riders','csr','cashiers']
+            'ALL': ['dispatchers','makers','riders','csr','cashiers','manager']
         }
         available_resources = resource_dict[get_resources]
         print(available_resources)
@@ -339,9 +339,9 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
             print('All boh makers are busy, getting assistance from manager to finish the task')
         else:
             request = makers.request()
-        with request:
             yield request
             yield env.timeout(task_duration)
+            makers.release(request)
         
     def cashier(env, cashiers, i, channel):
         if channel == 'Delivery':
