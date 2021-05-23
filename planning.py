@@ -41,6 +41,14 @@ def read_file(store_code):
         pass
     return df
 
+# Get daily routine tasks data
+@st.cache
+def get_routine_tasks():
+    df = pd.read_excel('./tasks_data/daily_task.xlsx',sheet_name='Routine task',usecols='A:M')
+    df['frequency'].fillna('daily',inplace=True)
+    df.fillna(0,inplace=True)
+    return df
+
 
 # Format_func - Retrieve store code from select_box
 def get_store_info(option):
@@ -271,25 +279,35 @@ st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
-makers_capacity = 3+1
-cashiers_capacity = 2+1
-riders_capacity = 6+1
+# Define store maximum capacity
+makers_capacity = 2
+cashiers_capacity = 1
+riders_capacity = 1
 oven_capacity = 4
-dispatchers_capacity = 2+1
-csr_capacity = 2+1
+dispatchers_capacity = 1
+csr_capacity = 1
+manager_in_charge_capacity = 1
 
+# Define container for charts: SPMH vs u14 & SPMH vs u30 after modelling is complete later on
 summary_kpi_container = st.beta_container()
 col1,col2 = summary_kpi_container.beta_columns(2)
 
+# Get routine tasks data for operation simulation
+routine_df = get_routine_tasks()
+st.write(routine_df)
+
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity):
+def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df):
+
+    # setting up empty dataframes for record
     scenario = 0
     random.seed(42)
     time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
     capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','csr','csr_serving','makers','dispatchers','riders'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
     scenario_df = {}
+
     def generate_order(i):
         if i <= len(df_sample):
             timeout = df_sample.loc[i,['timeout']].values[0]
@@ -297,7 +315,34 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
         return timeout
 
     ###### set up function to generate routine work #########
-
+    def generate_daily_routine(env, routine_df):
+        # print('Running daily routine')
+        for index, row in routine_df.iterrows():
+            # print('running {}'.format(row['tasks']))
+            yield env.timeout(row['time_out'])
+            env.process(process_routine(env,row['duration'],row))
+    
+    def process_routine(env, task_duration, row):
+        print(makers_capacity - makers.count)
+        get_resources = row[0]
+        resource_dict = {
+            'BOH': ['riders','makers','dispatchers'],
+            'FOH': ['csr','cashiers'],
+            'MOD': ['manager'],
+            'MGNT': ['manager'],
+            'ALL': ['manager','makers','dispatchers','riders','csr','cashiers']
+        }
+        available_resources = resource_dict[get_resources]
+        print(available_resources)
+        if makers.count >= makers_capacity:
+            request = manager.request()
+            print('All boh makers are busy, getting assistance from manager to finish the task')
+        else:
+            request = makers.request()
+        with request:
+            yield request
+            yield env.timeout(task_duration)
+        
     def cashier(env, cashiers, i, channel):
         if channel == 'Delivery':
             time_df.iloc[i]['cashier_time'] = 0
@@ -394,25 +439,24 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
             time_df.iloc[i]['foh_table_cleaning_time'] = 0
 
     def new_order(env, makers,i, total_order, df_sample,cashiers,csr):
+        print('store opening at {}'.format(env.now))
+        yield env.timeout(120)
+        print('opening for business at {}'.format(env.now))
         while True:
             if i < total_order:
                 yield env.timeout(generate_order(i))
+                print('running order',i)
                 channel = df_sample.loc[i,['channel']].values[0]
                 env.process(cashier(env,cashiers,i,channel))
                 env.process(boh_process_order(env,makers,oven,i,channel))
                 env.process(foh_order(env,csr,cashiers,i,channel))
                 i+=1
             else:
-                yield env.timeout(1) 
-
-    def daily_routine(j):
-        while True:
-            print('hello')
+                yield env.timeout(1)
         
 
     ###### Use sales forecast simulation 0 for process simulation (This one will need improvement) #####
     df_sample = df_sim_full[0].copy()
-
     df_sample = df_sample.reset_index()
     df_sample['timeout'] = df_sample['index'].diff().dt.seconds.div(60)
     df_sample['timeout'].fillna(0.0,inplace=True)
@@ -422,31 +466,39 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
     print('Total order: ', total_order)
 
     # simulate the operation process by iterating all resources capacities 
-    for j in range(1, makers_capacity):
-        for k in range(1, cashiers_capacity):
-            for l in range(1, dispatchers_capacity):
-                for m in range(1, riders_capacity):
-                    for n in range(1, csr_capacity):
+    for j in range(1, makers_capacity+1):
+        for k in range(1, cashiers_capacity+1):
+            for l in range(1, dispatchers_capacity+1):
+                for m in range(1, riders_capacity+1):
+                    for n in range(1, csr_capacity+1):
                         # Create simulation enviornment and define resources capacities
                         env = simpy.Environment()
                         i=0
+                        # Define resources for simulation
                         makers = simpy.Resource(env, capacity = j)
                         cashiers = simpy.Resource(env, capacity = k)
                         oven = simpy.Resource(env, capacity=oven_capacity)
                         dispatchers = simpy.Resource(env, capacity=l)
                         riders = simpy.Resource(env, capacity = m)
                         csr = simpy.Resource(env, capacity = n)
-                        #res = MonitoredResource(env, j)
-                        #st.write(res.data)
+                        manager = simpy.Resource(env, capacity = manager_in_charge_capacity)
+
+                        # Define process for simulation
+                        env.process(generate_daily_routine(env,routine_df))
                         env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr))
                         print('processing...',j,k,l,m,n)
+
+                        # Define simulation timeframe
                         store_opening_time = 8
                         store_closing_time = 24
                         total_opening_hours = (store_closing_time - store_opening_time) * 60
+
+                        # Run simulation from defined timeframe
                         env.run(until=total_opening_hours)
                         print('Simulation completed')
 
-                        total_manhour = (j+k+l+m+n)*14+16+8
+                        # Calculate total hours
+                        total_manhour = (j+k+l+m+n)*14+manager_in_charge_capacity+8
                         TPMH = total_order / total_manhour
                         SPMH = df_sample.bill_size.sum() / total_manhour
 
@@ -480,7 +532,7 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                         scenario +=1
     return scenario_df, scenario_kpi_df
 
-scenario_df, scenario_kpi_df = run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity)
+scenario_df, scenario_kpi_df = run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
