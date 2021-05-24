@@ -281,12 +281,12 @@ st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
 # Define store maximum capacity
 makers_capacity = 2
-cashiers_capacity = 1
-riders_capacity = 1
+cashiers_capacity = 2
+riders_capacity = 6
 oven_capacity = 4
-dispatchers_capacity = 1
-csr_capacity = 1
-manager_in_charge_capacity = 1
+dispatchers_capacity = 2
+csr_capacity = 4
+manager_capacity = 1
 
 # Define container for charts: SPMH vs u14 & SPMH vs u30 after modelling is complete later on
 summary_kpi_container = st.beta_container()
@@ -298,7 +298,7 @@ st.write(routine_df)
 
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df):
+def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df):
 
     # setting up empty dataframes for record
     scenario = 0
@@ -314,7 +314,7 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
             #print('time out value: ', timeout)
         return timeout
 
-    ###### set up function to generate routine work #########
+    # set up function to generate routine work
     def generate_daily_routine(env, routine_df):
         # print('Running daily routine')
         for index, row in routine_df.iterrows():
@@ -326,22 +326,30 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
         print(makers_capacity - makers.count)
         get_resources = row[0]
         resource_dict = {
+            'BOH': [riders,makers,dispatchers],
+            'FOH': [csr,cashiers],
+            'MOD': [manager],
+            'MGNT': [manager],
+            'ALL': [dispatchers,makers,riders,csr,cashiers,manager]
+        }
+        resource_str_dict ={
             'BOH': ['riders','makers','dispatchers'],
             'FOH': ['csr','cashiers'],
             'MOD': ['manager'],
             'MGNT': ['manager'],
-            'ALL': ['dispatchers','makers','riders','csr','cashiers','manager']
+            'ALL': ['dispatchers','makers','riders','csr','cashiers','manager']           
         }
         available_resources = resource_dict[get_resources]
-        print(available_resources)
-        if makers.count >= makers_capacity:
-            request = manager.request()
-            print('All boh makers are busy, getting assistance from manager to finish the task')
-        else:
-            request = makers.request()
-            yield request
-            yield env.timeout(task_duration)
-            makers.release(request)
+        capacity_str = resource_str_dict[get_resources]
+        for count, resource in enumerate(available_resources):
+            if resource.count >=  globals()['{}_capacity'.format(capacity_str[count])]:
+                continue
+            else:
+                with resource.request() as request:
+                    print('getting {} to {}'.format(capacity_str[count],row['tasks']))
+                    yield request
+                    yield env.timeout(task_duration)
+                    break
         
     def cashier(env, cashiers, i, channel):
         if channel == 'Delivery':
@@ -481,7 +489,7 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
                         dispatchers = simpy.Resource(env, capacity=l)
                         riders = simpy.Resource(env, capacity = m)
                         csr = simpy.Resource(env, capacity = n)
-                        manager = simpy.Resource(env, capacity = manager_in_charge_capacity)
+                        manager = simpy.Resource(env, capacity = manager_capacity)
 
                         # Define process for simulation
                         env.process(generate_daily_routine(env,routine_df))
@@ -498,7 +506,7 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
                         print('Simulation completed')
 
                         # Calculate total hours
-                        total_manhour = (j+k+l+m+n)*14+manager_in_charge_capacity+8
+                        total_manhour = (j+k+l+m+n)*14+manager_capacity+8
                         TPMH = total_order / total_manhour
                         SPMH = df_sample.bill_size.sum() / total_manhour
 
@@ -532,7 +540,7 @@ def run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capac
                         scenario +=1
     return scenario_df, scenario_kpi_df
 
-scenario_df, scenario_kpi_df = run_ops_simulation(manager_in_charge_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df)
+scenario_df, scenario_kpi_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
