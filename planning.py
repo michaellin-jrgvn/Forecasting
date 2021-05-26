@@ -285,7 +285,7 @@ cashiers_capacity = 2
 riders_capacity = 6
 oven_capacity = 4
 dispatchers_capacity = 2
-csr_capacity = 4
+csr_capacity = 2
 manager_capacity = 1
 
 # Define container for charts: SPMH vs u14 & SPMH vs u30 after modelling is complete later on
@@ -304,7 +304,8 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
     scenario = 0
     random.seed(42)
     time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
-    capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','csr','csr_serving','makers','dispatchers','riders'])
+    capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','csr','csr_serving','csr_cleaning','makers','dispatchers','riders'])
+    routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['csr','cashiers','dispatchers','makers','riders','manager'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
     scenario_df = {}
 
@@ -320,9 +321,9 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         for index, row in routine_df.iterrows():
             # print('running {}'.format(row['tasks']))
             yield env.timeout(row['time_out'])
-            env.process(process_routine(env,row['duration'],row))
+            env.process(process_routine(env,row['duration'],row,index))
     
-    def process_routine(env, task_duration, row):
+    def process_routine(env, task_duration, row,index):
         print(makers_capacity - makers.count)
         get_resources = row[0]
         resource_dict = {
@@ -333,8 +334,8 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             'ALL': [dispatchers,makers,riders,csr,cashiers,manager]
         }
         resource_str_dict ={
-            'BOH': ['riders','makers','dispatchers'],
-            'FOH': ['csr','cashiers'],
+            'BOH': ['riders','makers','dispatchers','manager'],
+            'FOH': ['csr','cashiers','manager'],
             'MOD': ['manager'],
             'MGNT': ['manager'],
             'ALL': ['dispatchers','makers','riders','csr','cashiers','manager']           
@@ -346,10 +347,13 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 continue
             else:
                 with resource.request() as request:
+                    routine_start_time = env.now
                     print('getting {} to {}'.format(capacity_str[count],row['tasks']))
                     yield request
                     yield env.timeout(task_duration)
-                    break
+                    routine_duration = env.now - routine_start_time
+                routine_time_df.iloc[index][capacity_str[count]] = routine_duration
+                break
         
     def cashier(env, cashiers, i, channel):
         if channel == 'Delivery':
@@ -506,7 +510,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         print('Simulation completed')
 
                         # Calculate total hours
-                        total_manhour = (j+k+l+m+n)*14+manager_capacity+8
+                        total_manhour = (j+k+l+m+n)*14+manager_capacity*14+8
                         TPMH = total_order / total_manhour
                         SPMH = df_sample.bill_size.sum() / total_manhour
 
@@ -528,15 +532,16 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         # Insert data to dataframe
                         scenario_data = pd.DataFrame([[scenario,k,j,l,m,n,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','csr','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
                         scenario_kpi_df = scenario_kpi_df.append(scenario_data)
-                        scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.9)
-                        scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.9)
+                        hit_rate_target = 0.9
+                        scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - hit_rate_target)
+                        scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - hit_rate_target)
                         scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
                         scenario_df[scenario] = time_df
                         
                         #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
                         #    time_df_plot = px.area(time_df)
                         #    st.plotly_chart(time_df_plot)
-
+                        # st.write(routine_time_df)
                         scenario +=1
     return scenario_df, scenario_kpi_df
 
@@ -545,24 +550,26 @@ scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
 
-#st.write(scenario_df[option])
-
-u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate',hover_data=['scenario','u30 max','u14 hitrate','u14 max'])
-col1.plotly_chart(u30_plot,use_container_width=True)
-u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scenario','u14 max','u30 hitrate','u30 max'])
-col2.plotly_chart(u14_plot,use_container_width=True)
-
 # Use minmax scaler to normalize all variable to determine the optimum capacity arrangement
 scaler = MinMaxScaler()
 scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 max trans','SPMH trans','u30 abs var trans','u14 abs var trans']] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate','u30 max','u14 hitrate','u14 max','SPMH', 'u30 absolute var','u14 absolute var']])
 scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.5
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
+scenario_kpi_df['classification'] = 'suboptimals'
+scenario_kpi_df.iloc[:3]['classification'] = 'optimums'
+st.write(scenario_kpi_df)
 st.subheader('Recommended Capcity Arrangements:')
 st.write(scenario_kpi_df[['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
 
 # set optimal arrnagement the first line of the dataframe
 optimal = scenario_kpi_df.iloc[0,:]
 optimal_details = scenario_df[optimal.scenario]
+
+# plot distribution and show optimal on chart
+u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate',hover_data=['scenario','u30 max','u14 hitrate','u14 max'],color='classification')
+col1.plotly_chart(u30_plot,use_container_width=True)
+u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scenario','u14 max','u30 hitrate','u30 max'],color='classification')
+col2.plotly_chart(u14_plot,use_container_width=True)
 
 # plot simulation time chart at optimal level
 time_df_plot = px.area(optimal_details)
