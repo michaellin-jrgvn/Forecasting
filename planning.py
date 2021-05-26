@@ -288,13 +288,17 @@ dispatchers_capacity = 2
 csr_capacity = 2
 manager_capacity = 1
 
+# Define simulation timeframe
+store_opening_time = 8
+store_closing_time = 24
+total_opening_hours = (store_closing_time - store_opening_time) * 60
+
 # Define container for charts: SPMH vs u14 & SPMH vs u30 after modelling is complete later on
 summary_kpi_container = st.beta_container()
 col1,col2 = summary_kpi_container.beta_columns(2)
 
 # Get routine tasks data for operation simulation
 routine_df = get_routine_tasks()
-st.write(routine_df)
 
 # Iterate through the capacities of resources
 @st.cache()
@@ -308,6 +312,8 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
     routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['csr','cashiers','dispatchers','makers','riders','manager'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
     scenario_df = {}
+    scenario_capacity_df = {}
+    scenario_routine_df = {}
 
     def generate_order(i):
         if i <= len(df_sample):
@@ -324,7 +330,6 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             env.process(process_routine(env,row['duration'],row,index))
     
     def process_routine(env, task_duration, row,index):
-        print(makers_capacity - makers.count)
         get_resources = row[0]
         resource_dict = {
             'BOH': [riders,makers,dispatchers],
@@ -348,12 +353,22 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             else:
                 with resource.request() as request:
                     routine_start_time = env.now
-                    print('getting {} to {}'.format(capacity_str[count],row['tasks']))
+                    # print('getting {} to {}'.format(capacity_str[count],row['tasks']))
                     yield request
                     yield env.timeout(task_duration)
                     routine_duration = env.now - routine_start_time
                 routine_time_df.iloc[index][capacity_str[count]] = routine_duration
                 break
+    
+    def monitor_resources(env, riders):
+        for i in range(1,total_opening_hours+1):
+            yield env.timeout(1)
+            item = (
+                env.now,
+                riders.count,
+                len(riders.queue)
+            )
+            print(item)
         
     def cashier(env, cashiers, i, channel):
         if channel == 'Delivery':
@@ -457,7 +472,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         while True:
             if i < total_order:
                 yield env.timeout(generate_order(i))
-                print('running order',i)
+                #print('running order',i)
                 channel = df_sample.loc[i,['channel']].values[0]
                 env.process(cashier(env,cashiers,i,channel))
                 env.process(boh_process_order(env,makers,oven,i,channel))
@@ -498,12 +513,8 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         # Define process for simulation
                         env.process(generate_daily_routine(env,routine_df))
                         env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr))
+                        env.process(monitor_resources(env,riders))
                         print('processing...',j,k,l,m,n)
-
-                        # Define simulation timeframe
-                        store_opening_time = 8
-                        store_closing_time = 24
-                        total_opening_hours = (store_closing_time - store_opening_time) * 60
 
                         # Run simulation from defined timeframe
                         env.run(until=total_opening_hours)
@@ -536,16 +547,19 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - hit_rate_target)
                         scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - hit_rate_target)
                         scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
+                        
                         scenario_df[scenario] = time_df
+                        scenario_capacity_df[scenario] = capacity_df
+                        scenario_routine_df[scenario] = routine_time_df
                         
                         #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
                         #    time_df_plot = px.area(time_df)
                         #    st.plotly_chart(time_df_plot)
                         # st.write(routine_time_df)
                         scenario +=1
-    return scenario_df, scenario_kpi_df
+    return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df
 
-scenario_df, scenario_kpi_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df)
+scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
@@ -564,6 +578,10 @@ st.write(scenario_kpi_df[['scenario','cashiers','csr','makers','dispatchers','ri
 # set optimal arrnagement the first line of the dataframe
 optimal = scenario_kpi_df.iloc[0,:]
 optimal_details = scenario_df[optimal.scenario]
+optimal_capacity = scenario_capacity_df[optimal.scenario]
+
+#st.subheader('Routine Capacity')
+#st.write(scenario_routine_df[optimal.scenario])
 
 # plot distribution and show optimal on chart
 u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate',hover_data=['scenario','u30 max','u14 hitrate','u14 max'],color='classification')
@@ -596,8 +614,6 @@ st.plotly_chart(occupancy_30m_plt)
 # Preprocess dataframe ready for roster optimization
 # Shifting time index by -60mins for roster to cater for TM preparation (30mins), ready for demand (30mins)
 roster_df = manpower_requirement.shift(periods=-30,freq='min')
-# factorize all requirement by 80% to prevent overstaffing
-# roster_df = roster_df * 0.8
 st.write(roster_df)
 
 # Run Linear Programming on each station
