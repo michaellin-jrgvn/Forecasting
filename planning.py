@@ -302,17 +302,17 @@ routine_df = get_routine_tasks()
 
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df):
+def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date):
 
     # setting up empty dataframes for record
     scenario = 0
     random.seed(42)
-    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
-    capacity_df = pd.DataFrame(columns=['time','resource_name','occupied_quantities','tasks_in_queue'])
+    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
+    capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['csr','cashiers','dispatchers','makers','riders','manager'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
-    scenario_df = {}
-    scenario_capacity_df = {}
+    scenario_df = pd.DataFrame(columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
+    scenario_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     scenario_routine_df = {}
 
     def generate_order(i):
@@ -360,12 +360,16 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 routine_time_df.iloc[index][capacity_str[count]] = routine_duration
                 break
     
-    def monitor_resources(env, riders):
-        for i in range(1,total_opening_hours+1):
+    def monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario):
+        for i in range(0,total_opening_hours+1):
+            resources = {'riders':riders,'cashiers':cashiers,'csr':csr,'manager':manager,'dispatcher':dispatchers,'makers':makers}
+            for index, resource in enumerate(resources):
+                final_index = i * index + i * len(resources)
+                capacity_df.loc[final_index]= [scenario, env.now, resource, resources[resource].count, len(resources[resource].queue)]
             yield env.timeout(1)
-            capacity_df.loc[i] = [env.now, 'riders', riders.count, len(riders.queue)]
-        
-    def cashier(env, cashiers, i, channel):
+            
+
+    def cashier(env, cashiers, i, channel,scenario):
         if channel == 'Delivery':
             time_df.iloc[i]['cashier_time'] = 0
         else:
@@ -373,21 +377,24 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             with cashiers.request() as request:
                 yield request
                 yield env.timeout(random.randint(1,3))
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['cashier_time'] = env.now-start_time
 
-    def boh_process_order(env, makers, oven, i, channel):
+    def boh_process_order(env, makers, oven, i, channel,scenario):
         make_start_time = env.now
         with makers.request() as request:
             yield request
             #print('Total makers occupied: ', makers.count)
             #print('Order making in process ', i)
             yield env.timeout(random.randint(2,3))
+        time_df.iloc[i]['scenario'] = scenario
         time_df.iloc[i]['make_time'] = env.now-make_start_time
         
         with oven.request() as request:
             oven_start_time = env.now
             yield request
             yield env.timeout(7)
+        time_df.iloc[i]['scenario'] = scenario
         time_df.iloc[i]['oven_time'] = env.now-oven_start_time
 
         with dispatchers.request() as request:
@@ -396,6 +403,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             #print('cut, pack and dispatch')
             yield env.timeout(2)
             dispatch_end_time = env.now
+        time_df.iloc[i]['scenario'] = scenario
         time_df.iloc[i]['dispatch_time'] = env.now-dispatch_start_time
 
         if channel == 'Delivery':
@@ -409,22 +417,25 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 delivery_complete_time = env.now
                 # Driver return to store
                 yield env.timeout(drive_time)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['order_await_delivery'] = out_delivery_time-dispatch_end_time
             time_df.iloc[i]['delivery_time'] = delivery_complete_time-out_delivery_time
             time_df.iloc[i]['delivery_return_time'] = env.now-delivery_complete_time
 
         else:
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['order_await_delivery'] = 0
             time_df.iloc[i]['delivery_time'] = 0
             time_df.iloc[i]['delivery_return_time'] = 0
     
-    def foh_order(env, csr, cashiers, i, channel):
+    def foh_order(env, csr, cashiers, i, channel,scenario):
         if channel == 'Dinein':
             foh_service_time = env.now
             with csr.request() as request:
                 busing_time = 1
                 yield request
                 yield env.timeout(busing_time)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_dinein_dispatch_time'] = env.now - foh_service_time
             time_df.iloc[i]['foh_pickup_dispatch_time'] = 0
             customer_eating_time = np.random.randint(30,45)
@@ -436,6 +447,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 yield request
                 yield env.timeout(cleaning_time)
                 yield env.timeout(table_set_up_time)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_table_cleaning_time'] = env.now - clean_up_request
         elif channel == 'Pickup':
             foh_pickup_dispatch = env.now
@@ -443,15 +455,17 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 foh_dispatch = random.randint(1,2)
                 yield request
                 yield env.timeout(foh_dispatch)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_pickup_dispatch_time'] = env.now - foh_pickup_dispatch
             time_df.iloc[i]['foh_dinein_dispatch_time'] = 0
             time_df.iloc[i]['foh_table_cleaning_time'] = 0
         else:
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_pickup_dispatch_time'] = 0
             time_df.iloc[i]['foh_dinein_dispatch_time'] = 0
             time_df.iloc[i]['foh_table_cleaning_time'] = 0
 
-    def new_order(env, makers,i, total_order, df_sample,cashiers,csr):
+    def new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario):
         print('store opening at {}'.format(env.now))
         yield env.timeout(120)
         print('opening for business at {}'.format(env.now))
@@ -460,9 +474,9 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 yield env.timeout(generate_order(i))
                 #print('running order',i)
                 channel = df_sample.loc[i,['channel']].values[0]
-                env.process(cashier(env,cashiers,i,channel))
-                env.process(boh_process_order(env,makers,oven,i,channel))
-                env.process(foh_order(env,csr,cashiers,i,channel))
+                env.process(cashier(env,cashiers,i,channel,scenario))
+                env.process(boh_process_order(env,makers,oven,i,channel,scenario))
+                env.process(foh_order(env,csr,cashiers,i,channel,scenario))
                 i+=1
             else:
                 yield env.timeout(1)
@@ -498,8 +512,8 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
 
                         # Define process for simulation
                         env.process(generate_daily_routine(env,routine_df))
-                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr))
-                        env.process(monitor_resources(env,riders))
+                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario))
+                        env.process(monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario))
                         print('processing...',j,k,l,m,n)
 
                         # Run simulation from defined timeframe
@@ -519,10 +533,11 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         u14_max = u14_df['total_time'].max()
 
                         # Determine u30 hitrate
-                        deli_df = time_df[time_df['delivery_time']>0]
+                        deli_df = time_df[time_df['delivery_time']>0].drop('scenario',axis=1)
                         total_deli_order = len(deli_df)
                         deli_df['total_time'] = deli_df.sum(axis=1)
                         pass_u30 = deli_df[deli_df['total_time'].sub(deli_df['delivery_return_time']) <= 30]['total_time'].count()
+                        print(pass_u30)
                         u30_hitrate = round((pass_u30/total_deli_order),2)
                         u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
 
@@ -533,11 +548,19 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - hit_rate_target)
                         scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - hit_rate_target)
                         scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
-                        
-                        scenario_df[scenario] = time_df
-                        scenario_capacity_df[scenario] = capacity_df
+
+                        # Add date & time to the time column of capacity_df dataframe
+                        start_datetime = datetime.datetime.combine(forecast_date, datetime.time(8,00))
+                        print(start_datetime)
+                        capacity_df['time'] = pd.to_timedelta(capacity_df['time'],unit='m')
+                        capacity_df['time'] = start_datetime + capacity_df['time']
+
+                        scenario_df = scenario_df.append(time_df)
+                        scenario_capacity_df = scenario_capacity_df.append(capacity_df)
                         scenario_routine_df[scenario] = routine_time_df
                         
+
+    
                         #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
                         #    time_df_plot = px.area(time_df)
                         #    st.plotly_chart(time_df_plot)
@@ -545,7 +568,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         scenario +=1
     return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df
 
-scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df)
+scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
@@ -557,19 +580,26 @@ scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scena
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
 scenario_kpi_df['classification'] = 'suboptimals'
 scenario_kpi_df.iloc[:3]['classification'] = 'optimums'
-st.write(scenario_kpi_df)
-st.subheader('Recommended Capcity Arrangements:')
+#st.write(scenario_kpi_df)
+
+st.subheader('Recommended Capacity Arrangements:')
 st.write(scenario_kpi_df[['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
 
 # set optimal arrnagement the first line of the dataframe
 optimal = scenario_kpi_df.iloc[0,:]
-optimal_details = scenario_df[optimal.scenario]
-optimal_capacity = scenario_capacity_df[optimal.scenario]
+optimal_details = scenario_df[scenario_df.scenario == optimal.scenario]
 
-st.subheader('Capacity')
-st.write(scenario_capacity_df[optimal.scenario])
-capacity_plot = px.area(scenario_capacity_df[optimal.scenario]['occupied_quantities'])
+st.subheader('Resources Usage')
+resample_selection = st.selectbox('View data in different frequency',['T','30T','H'])
+optimal_capacity = scenario_capacity_df[scenario_capacity_df.scenario == optimal.scenario].set_index('time').groupby('resource_name').resample(resample_selection).max()
+optimal_capacity = optimal_capacity.reset_index(level=0,drop=True)
+st.write(optimal_capacity)
+capacity_plot = px.area(optimal_capacity,x=optimal_capacity.index,y='occupied_quantities',color='resource_name')
 st.plotly_chart(capacity_plot)
+
+st.subheader('Tasks / Orders in queue')
+pending_tasks_plt = px.area(optimal_capacity,x=optimal_capacity.index,y='tasks_in_queue',color='resource_name')
+st.plotly_chart(pending_tasks_plt)
 
 # plot distribution and show optimal on chart
 u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate',hover_data=['scenario','u30 max','u14 hitrate','u14 max'],color='classification')
@@ -578,50 +608,57 @@ u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scen
 col2.plotly_chart(u14_plot,use_container_width=True)
 
 # plot simulation time chart at optimal level
-time_df_plot = px.area(optimal_details)
+st.write(optimal_details)
+time_df_plot = px.area(optimal_details.drop('scenario',axis=1))
 st.plotly_chart(time_df_plot)
 
 # Resample the scenario into 30mins timeframe and determine the manpower requirement in every 30mins
-occupancy_30m = scenario_df[optimal.scenario].resample('30min').sum() / 30
-manpower_requirement = occupancy_30m[['cashier_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
-manpower_requirement['csr_time'] = manpower_requirement['foh_dinein_dispatch_time'] + manpower_requirement['foh_pickup_dispatch_time'] + manpower_requirement['foh_table_cleaning_time']
-manpower_requirement['rider_time'] = manpower_requirement['delivery_time'] + manpower_requirement['delivery_return_time']
-manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time'],axis=1)
+#occupancy_30m = optimal_details.resample('30min').sum() / 30
+#manpower_requirement = occupancy_30m[['cashier_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
+#manpower_requirement['csr_time'] = manpower_requirement['foh_dinein_dispatch_time'] + manpower_requirement['foh_pickup_dispatch_time'] + manpower_requirement['foh_table_cleaning_time']
+#manpower_requirement['rider_time'] = manpower_requirement['delivery_time'] + manpower_requirement['delivery_return_time']
+#manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time'],axis=1)
 
 # Set ceiling of each column equal to the optimal manpower requirement
-manpower_requirement['make_time'] = manpower_requirement['make_time'].clip(0,scenario_kpi_df.iloc[0,:]['makers'])
-manpower_requirement['cashier_time'] = manpower_requirement['cashier_time'].clip(0,scenario_kpi_df.iloc[0,:]['cashiers'])
-manpower_requirement['csr_time'] = manpower_requirement['csr_time'].clip(0,scenario_kpi_df.iloc[0,:]['csr'])
-manpower_requirement['dispatch_time'] = manpower_requirement['dispatch_time'].clip(0,scenario_kpi_df.iloc[0,:]['dispatchers'])
-manpower_requirement['rider_time'] = manpower_requirement['rider_time'].clip(0,scenario_kpi_df.iloc[0,:]['riders'])
+#manpower_requirement['make_time'] = manpower_requirement['make_time'].clip(0,scenario_kpi_df.iloc[0,:]['makers'])
+#manpower_requirement['cashier_time'] = manpower_requirement['cashier_time'].clip(0,scenario_kpi_df.iloc[0,:]['cashiers'])
+#manpower_requirement['csr_time'] = manpower_requirement['csr_time'].clip(0,scenario_kpi_df.iloc[0,:]['csr'])
+#manpower_requirement['dispatch_time'] = manpower_requirement['dispatch_time'].clip(0,scenario_kpi_df.iloc[0,:]['dispatchers'])
+#manpower_requirement['rider_time'] = manpower_requirement['rider_time'].clip(0,scenario_kpi_df.iloc[0,:]['riders'])
 
-st.write(manpower_requirement)
-occupancy_30m_plt = px.area(manpower_requirement)
-st.plotly_chart(occupancy_30m_plt)
+#st.write(manpower_requirement)
+#occupancy_30m_plt = px.area(manpower_requirement)
+#st.plotly_chart(occupancy_30m_plt)
 
 # Preprocess dataframe ready for roster optimization
 # Shifting time index by -60mins for roster to cater for TM preparation (30mins), ready for demand (30mins)
-roster_df = manpower_requirement.shift(periods=-30,freq='min')
+#roster_df = manpower_requirement.shift(periods=-30,freq='min')
+#st.subheader('Roster_df')
+#st.write(roster_df)
+
+# Restructure capacity_df for optimization
+roster_df = optimal_capacity.pivot_table(index='time',columns='resource_name',values='occupied_quantities',aggfunc='max')
 st.write(roster_df)
 
 # Run Linear Programming on each station
-make_roster, make_schedule = optimize_labour(roster_df, 'make_time')
-rider_roster, rider_schedule = optimize_labour(roster_df,'rider_time')
-cashier_roster, cashier_schedule = optimize_labour(roster_df,'cashier_time')
-dispatcher_roster, dispatcher_schedule = optimize_labour(roster_df,'dispatch_time')
-csr_roster, csr_schedule = optimize_labour(roster_df,'csr_time')
-merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
-st.write(merged_roster)
+make_roster, make_schedule = optimize_labour(roster_df, 'makers')
+rider_roster, rider_schedule = optimize_labour(roster_df,'riders')
+cashier_roster, cashier_schedule = optimize_labour(roster_df,'cashiers')
+dispatcher_roster, dispatcher_schedule = optimize_labour(roster_df,'dispatcher')
+csr_roster, csr_schedule = optimize_labour(roster_df,'csr')
+mgnt_roster, mgnt_schedule = optimize_labour(roster_df,'manager')
+merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster,mgnt_roster],axis=1)
+#st.write(merged_roster)
 
 # Generate roster schedule chart
-merged_schedule = pd.concat([make_schedule,rider_schedule,cashier_schedule,dispatcher_schedule,csr_schedule])
+merged_schedule = pd.concat([make_schedule,rider_schedule,cashier_schedule,dispatcher_schedule,csr_schedule,mgnt_schedule])
 merged_schedule.reset_index(drop=True, inplace=True)
-st.write(merged_schedule)
+#st.write(merged_schedule)
 schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
 st.plotly_chart(schedule_plt)
 hours_per_shift = 4
 final_MH = merged_roster.sum() * hours_per_shift
 
 # Conclude the final SPMH and MH from optimal schedule
-st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum() +16+8),0))
-st.write('Total hours arranged: ', final_MH.sum()+16+8)
+st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum()+8),0))
+st.write('Total hours arranged: ', final_MH.sum()+8)

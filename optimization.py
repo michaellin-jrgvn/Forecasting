@@ -1,6 +1,5 @@
 import pulp as pl
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 
 def optimize_labour(ds, resource):
@@ -39,6 +38,15 @@ def optimize_labour(ds, resource):
     model += x[14] + x[15] + x[16] + x[17] + x[18] + x[19] + x[20] + x[21] >= ds.iloc[21,:][resource]
     model += x[15] + x[16] + x[17] + x[18] + x[19] + x[20] + x[21] + x[22] >= ds.iloc[22,:][resource]
     model += x[16] + x[17] + x[18] + x[19] + x[20] + x[21] + x[22] + x[23] >= ds.iloc[23,:][resource]
+    model += x[17] + x[18] + x[19] + x[20] + x[21] + x[22] + x[23] + x[24] >= ds.iloc[24,:][resource]
+    model += x[18] + x[19] + x[20] + x[21] + x[22] + x[23] + x[24] + x[25] >= ds.iloc[25,:][resource]
+    model += x[19] + x[20] + x[21] + x[22] + x[23] + x[24] + x[25] + x[26] >= ds.iloc[26,:][resource]
+    model += x[20] + x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] >= ds.iloc[27,:][resource]
+    model += x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] >= ds.iloc[28,:][resource]
+    model += x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] >= ds.iloc[29,:][resource]
+    model += x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] >= ds.iloc[30,:][resource]
+    model += x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] + x[31] >= ds.iloc[31,:][resource]
+
     
 
     # Solve Model
