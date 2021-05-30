@@ -521,7 +521,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         print('Simulation completed')
 
                         # Calculate total hours
-                        total_manhour = (j+k+l+m+n)*14+manager_capacity*14+8
+                        total_manhour = (j+k+l+m+n)*16+manager_capacity*16+8
                         TPMH = total_order / total_manhour
                         SPMH = df_sample.bill_size.sum() / total_manhour
 
@@ -611,30 +611,6 @@ col2.plotly_chart(u14_plot,use_container_width=True)
 st.write(optimal_details)
 time_df_plot = px.area(optimal_details.drop('scenario',axis=1))
 st.plotly_chart(time_df_plot)
-
-# Resample the scenario into 30mins timeframe and determine the manpower requirement in every 30mins
-#occupancy_30m = optimal_details.resample('30min').sum() / 30
-#manpower_requirement = occupancy_30m[['cashier_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
-#manpower_requirement['csr_time'] = manpower_requirement['foh_dinein_dispatch_time'] + manpower_requirement['foh_pickup_dispatch_time'] + manpower_requirement['foh_table_cleaning_time']
-#manpower_requirement['rider_time'] = manpower_requirement['delivery_time'] + manpower_requirement['delivery_return_time']
-#manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time'],axis=1)
-
-# Set ceiling of each column equal to the optimal manpower requirement
-#manpower_requirement['make_time'] = manpower_requirement['make_time'].clip(0,scenario_kpi_df.iloc[0,:]['makers'])
-#manpower_requirement['cashier_time'] = manpower_requirement['cashier_time'].clip(0,scenario_kpi_df.iloc[0,:]['cashiers'])
-#manpower_requirement['csr_time'] = manpower_requirement['csr_time'].clip(0,scenario_kpi_df.iloc[0,:]['csr'])
-#manpower_requirement['dispatch_time'] = manpower_requirement['dispatch_time'].clip(0,scenario_kpi_df.iloc[0,:]['dispatchers'])
-#manpower_requirement['rider_time'] = manpower_requirement['rider_time'].clip(0,scenario_kpi_df.iloc[0,:]['riders'])
-
-#st.write(manpower_requirement)
-#occupancy_30m_plt = px.area(manpower_requirement)
-#st.plotly_chart(occupancy_30m_plt)
-
-# Preprocess dataframe ready for roster optimization
-# Shifting time index by -60mins for roster to cater for TM preparation (30mins), ready for demand (30mins)
-#roster_df = manpower_requirement.shift(periods=-30,freq='min')
-#st.subheader('Roster_df')
-#st.write(roster_df)
 
 # Restructure capacity_df for optimization
 roster_df = optimal_capacity.pivot_table(index='time',columns='resource_name',values='occupied_quantities',aggfunc='max')

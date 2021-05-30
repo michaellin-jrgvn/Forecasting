@@ -45,8 +45,7 @@ def optimize_labour(ds, resource):
     model += x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] >= ds.iloc[28,:][resource]
     model += x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] >= ds.iloc[29,:][resource]
     model += x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] >= ds.iloc[30,:][resource]
-    model += x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] + x[31] >= ds.iloc[31,:][resource]
-
+    model += x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] + x[31] == 0
     
 
     # Solve Model
