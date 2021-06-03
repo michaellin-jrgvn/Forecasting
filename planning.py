@@ -41,6 +41,14 @@ def read_file(store_code):
         pass
     return df
 
+# Get daily routine tasks data
+@st.cache
+def get_routine_tasks():
+    df = pd.read_excel('./tasks_data/daily_task.xlsx',sheet_name='Routine task',usecols='A:M')
+    df['frequency'].fillna('daily',inplace=True)
+    df.fillna(0,inplace=True)
+    return df
+
 
 # Format_func - Retrieve store code from select_box
 def get_store_info(option):
@@ -271,148 +279,303 @@ st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
 
-makers_capacity = 3+1
-cashiers_capacity = 2+1
-riders_capacity = 6+1
+# Define store maximum capacity
+makers_capacity = 2
+cashiers_capacity = 2
+riders_capacity = 6
 oven_capacity = 4
-dispatchers_capacity = 2+1
-csr_capacity = 2+1
+dispatchers_capacity = 2
+csr_capacity = 2
+manager_capacity = 1
 
+# Define simulation timeframe
+store_opening_time = 8
+store_closing_time = 23
+total_opening_hours = (store_closing_time - store_opening_time) * 60
+
+# Define container for charts: SPMH vs u14 & SPMH vs u30 after modelling is complete later on
 summary_kpi_container = st.beta_container()
 col1,col2 = summary_kpi_container.beta_columns(2)
 
+# Get routine tasks data for operation simulation
+routine_df = get_routine_tasks()
+
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity):
+def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date):
+
+    # setting up empty dataframes for record
     scenario = 0
     random.seed(42)
-    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
-    capacity_df = pd.DataFrame(index=df_sim_full[0].index, columns=['cashiers','csr','csr_serving','makers','dispatchers','riders'])
+    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
+    capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
+    routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['csr','cashiers','dispatchers','makers','riders','manager'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
-    scenario_df = {}
+    scenario_df = pd.DataFrame(columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
+    scenario_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
+    scenario_routine_df = {}
+
+    # Task priority setting
+    ORDER_PRIORITY = -1
+    DOUGH_PRIORITY = 1
+    ROUTINE_PRIORITY = 3
+
     def generate_order(i):
         if i <= len(df_sample):
             timeout = df_sample.loc[i,['timeout']].values[0]
             #print('time out value: ', timeout)
         return timeout
 
-    ###### set up function to generate routine work #########
+    # set up function to generate routine work
+    def generate_daily_routine(env, routine_df, priority):
+        # print('Running daily routine')
+        for index, row in routine_df.iterrows():
+            # print('running {}'.format(row['tasks']))
+            yield env.timeout(row['time_out'])
+            env.process(process_routine(env,row['duration'],row,index,priority))
+    
+    def process_routine(env, task_duration, row,index, priority):
+        get_resources = row[0]
+        resource_dict = {
+            'BOH': [makers,dispatchers,manager,riders],
+            'FOH': [csr,cashiers,manager],
+            'MOD': [manager],
+            'MGNT': [manager],
+            'ALL': [dispatchers,makers,riders,csr,cashiers,manager]
+        }
+        resource_str_dict ={
+            'BOH': ['maker','dispatchers','manager','riders'],
+            'FOH': ['csr','cashiers','manager'],
+            'MOD': ['manager'],
+            'MGNT': ['manager'],
+            'ALL': ['dispatchers','makers','riders','csr','cashiers','manager']           
+        }
+        available_resources = resource_dict[get_resources]
+        capacity_str = resource_str_dict[get_resources]
+        for count, resource in enumerate(available_resources):
+            if resource.count ==  resource.capacity:
+                print('{} is busy to handle {}. Swapping to the next resources'.format(capacity_str[count],row['tasks']))
+                continue
+            else:
+                done_in = task_duration
+                while done_in:
+                    with resource.request(priority=priority) as request:
+                        routine_start_time = env.now
+                        yield request
+                        try:
+                            print('getting {} to {}'.format(capacity_str[count],row['tasks']))
+                            yield env.timeout(task_duration)
+                            routine_duration = env.now - routine_start_time
+                            routine_time_df.iloc[index][capacity_str[count]] = routine_duration
+                            done_in = 0
+                        except simpy.Interrupt:
+                            print('{} interrupted'.format(row['tasks']))
+                            done_in-= env.now - routine_start_time
+                break
 
-    def cashier(env, cashiers, i, channel):
+    
+    def monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario):
+        for i in range(0,total_opening_hours+1):
+            resources = {'riders':riders,'cashiers':cashiers,'csr':csr,'manager':manager,'dispatcher':dispatchers,'makers':makers}
+            for index, resource in enumerate(resources):
+                final_index = i * index + i * len(resources)
+                capacity_df.loc[final_index]= [scenario, env.now, resource, resources[resource].count, len(resources[resource].queue)]
+            yield env.timeout(1)
+            
+
+    def cashier(env, cashiers, i, channel,scenario,priority):
         if channel == 'Delivery':
             time_df.iloc[i]['cashier_time'] = 0
-            capacity_df.iloc[i]['cashiers'] = 0
         else:
             start_time = env.now
-            with cashiers.request() as request:
-                yield request
-                capacity_df.iloc[i]['cashiers'] = cashiers.count
-                yield env.timeout(random.randint(1,3))
+            # if cashier is busy, get manager support
+            if cashiers.count == cashiers.capacity:
+                # However, if manager is busy, pass it back to cashier to handle
+                if manager.count == manager.capacity:
+                    with cashiers.request(priority=priority,preempt=False) as request:
+                        yield request
+                        yield env.timeout(random.randint(1,3))
+                else:
+                    with manager.request(priority=priority,preempt=False) as request:
+                        yield request
+                        yield env.timeout(1) # Manager takes 1 min to walk to the station to support
+                        yield env.timeout(random.randint(1,3))
+            else:
+                with cashiers.request(priority=priority,preempt=False) as request:
+                    yield request
+                    yield env.timeout(random.randint(1,3))
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['cashier_time'] = env.now-start_time
 
-    def boh_process_order(env, makers, oven, i, channel):
+    def boh_process_order(env, makers, oven, i, channel,scenario,priority):
         make_start_time = env.now
-        with makers.request() as request:
-            yield request
-            capacity_df.iloc[i]['makers'] = makers.count
-            #print('Total makers occupied: ', makers.count)
-            #print('Order making in process ', i)
-            yield env.timeout(random.randint(2,3))
+        # if makers are busy, get manager support
+        if makers.count == makers.capacity:
+            # However, if manager is busy, pass it back to makers to handle
+            if manager.count == manager.capacity:
+                with makers.request(priority=priority,preempt=False) as request:
+                    yield request
+                    #print('Total makers occupied: ', makers.count)
+                    #print('Order making in process ', i)
+                    yield env.timeout(random.randint(2,3))                
+            else:
+                with manager.request(priority=priority,preempt=False) as request:
+                    yield request
+                    yield env.timeout(1) # Manager takes 1 min to walk to the station to support
+                    yield env.timeout(random.randint(2,3))
+        else:
+            with makers.request(priority=priority,preempt=False) as request:
+                yield request
+                #print('Total makers occupied: ', makers.count)
+                #print('Order making in process ', i)
+                yield env.timeout(random.randint(2,3))
+        time_df.iloc[i]['scenario'] = scenario
         time_df.iloc[i]['make_time'] = env.now-make_start_time
         
         with oven.request() as request:
             oven_start_time = env.now
             yield request
             yield env.timeout(7)
+        time_df.iloc[i]['scenario'] = scenario
         time_df.iloc[i]['oven_time'] = env.now-oven_start_time
 
-        with dispatchers.request() as request:
+        if dispatchers.count == dispatchers.capacity:
             dispatch_start_time = env.now
-            yield request
-            capacity_df.iloc[i]['dispatchers'] = dispatchers.count
-            #print('cut, pack and dispatch')
-            yield env.timeout(2)
-            dispatch_end_time = env.now
+            if manager.count == manager.capacity:
+                with dispatchers.request(priority=priority,preempt=False) as request:
+                    dispatch_start_time = env.now
+                    yield request
+                    #print('cut, pack and dispatch')
+                    yield env.timeout(2)
+                    dispatch_end_time = env.now
+            else:
+                with manager.request(priority=priority,preempt=False) as request:
+                    yield request
+                    yield env.timeout(1) # Manager takes 1 min to talk to the station to support
+                    yield env.timeout(2)
+                    dispatch_end_time = env.now
+        else:
+            with dispatchers.request(priority=priority,preempt=False) as request:
+                dispatch_start_time = env.now
+                yield request
+                #print('cut, pack and dispatch')
+                yield env.timeout(2)
+                dispatch_end_time = env.now
+        time_df.iloc[i]['scenario'] = scenario
         time_df.iloc[i]['dispatch_time'] = env.now-dispatch_start_time
 
         if channel == 'Delivery':
-            with riders.request() as request:
+            with riders.request(priority=priority,preempt=False) as request:
                 drive_time = random.randint(4,10)
                 customer_waiting_time = random.randint(3,5)
                 yield request
-                capacity_df.iloc[i]['riders'] = riders.count
                 out_delivery_time = env.now
                 yield env.timeout(drive_time)
                 yield env.timeout(customer_waiting_time)
                 delivery_complete_time = env.now
                 # Driver return to store
                 yield env.timeout(drive_time)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['order_await_delivery'] = out_delivery_time-dispatch_end_time
             time_df.iloc[i]['delivery_time'] = delivery_complete_time-out_delivery_time
             time_df.iloc[i]['delivery_return_time'] = env.now-delivery_complete_time
 
         else:
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['order_await_delivery'] = 0
             time_df.iloc[i]['delivery_time'] = 0
             time_df.iloc[i]['delivery_return_time'] = 0
-            capacity_df.iloc[i]['riders'] = 0
     
-    def foh_order(env, csr, cashiers, i, channel):
+    def foh_order(env, csr, cashiers, i, channel,scenario,priority):
         if channel == 'Dinein':
             foh_service_time = env.now
-            with csr.request() as request:
-                busing_time = 1
-                yield request
-                capacity_df.iloc[i]['csr_serving'] = csr.count
-                yield env.timeout(busing_time)
+            if csr.count == csr.capacity:
+                if manager.count == manager.capacity:
+                    with csr.request(priority=priority,preempt=False) as request:
+                        busing_time = 1
+                        yield request
+                        yield env.timeout(busing_time)
+                else:
+                    with manager.request(priority=priority,preempt=False) as request:
+                        busing_time = 1
+                        yield request
+                        yield env.timeout(1) # Manager takes 1 min to walk to the station to support
+                        yield env.timeout(busing_time)
+            else:
+                with csr.request(priority=priority,preempt=False) as request:
+                    busing_time = 1
+                    yield request
+                    yield env.timeout(busing_time)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_dinein_dispatch_time'] = env.now - foh_service_time
             time_df.iloc[i]['foh_pickup_dispatch_time'] = 0
             customer_eating_time = np.random.randint(30,45)
             yield env.timeout(customer_eating_time)
-            with csr.request() as request:
-                clean_up_request = env.now
-                cleaning_time = np.random.randint(3,5)
-                table_set_up_time = np.random.randint(2,3)
-                yield request
-                capacity_df.iloc[i]['csr_cleaning'] = csr.count
-                yield env.timeout(cleaning_time)
-                yield env.timeout(table_set_up_time)
+
+            # Customer Departure, clean up and table set up
+            if csr.count == csr.capacity:
+                if manager.count == manager.capacity:
+                    with csr.request(priority=priority,preempt=False) as request:
+                        clean_up_request = env.now
+                        cleaning_time = np.random.randint(3,5)
+                        table_set_up_time = np.random.randint(2,3)
+                        yield request
+                        yield env.timeout(cleaning_time)
+                        yield env.timeout(table_set_up_time)    
+                else:
+                    with manager.request(priority=priority,preempt=False) as request:
+                        clean_up_request = env.now
+                        cleaning_time = np.random.randint(3,5)
+                        table_set_up_time = np.random.randint(2,3)
+                        yield request
+                        yield env.timeout(1) # Manager takes 1 min to talk to the station to support
+                        yield env.timeout(cleaning_time)
+                        yield env.timeout(table_set_up_time)                    
+            else:
+                with csr.request(priority=priority,preempt=False) as request:
+                    clean_up_request = env.now
+                    cleaning_time = np.random.randint(3,5)
+                    table_set_up_time = np.random.randint(2,3)
+                    yield request
+                    yield env.timeout(cleaning_time)
+                    yield env.timeout(table_set_up_time)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_table_cleaning_time'] = env.now - clean_up_request
         elif channel == 'Pickup':
             foh_pickup_dispatch = env.now
-            with cashiers.request() as request:
+            with cashiers.request(priority=priority,preempt=False) as request:
                 foh_dispatch = random.randint(1,2)
                 yield request
-                capacity_df.iloc[i]['cashiers'] = cashiers.count
                 yield env.timeout(foh_dispatch)
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_pickup_dispatch_time'] = env.now - foh_pickup_dispatch
             time_df.iloc[i]['foh_dinein_dispatch_time'] = 0
             time_df.iloc[i]['foh_table_cleaning_time'] = 0
         else:
+            time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['foh_pickup_dispatch_time'] = 0
             time_df.iloc[i]['foh_dinein_dispatch_time'] = 0
             time_df.iloc[i]['foh_table_cleaning_time'] = 0
 
-    def new_order(env, makers,i, total_order, df_sample,cashiers,csr):
+    def new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario,priority):
+        print('store opening at {}'.format(env.now))
+        yield env.timeout(120)
+        print('opening for business at {}'.format(env.now))
         while True:
             if i < total_order:
                 yield env.timeout(generate_order(i))
+                #print('running order',i)
                 channel = df_sample.loc[i,['channel']].values[0]
-                env.process(cashier(env,cashiers,i,channel))
-                env.process(boh_process_order(env,makers,oven,i,channel))
-                env.process(foh_order(env,csr,cashiers,i,channel))
+                env.process(cashier(env,cashiers,i,channel,scenario,priority))
+                env.process(boh_process_order(env,makers,oven,i,channel,scenario,priority))
+                env.process(foh_order(env,csr,cashiers,i,channel,scenario,priority))
                 i+=1
             else:
-                yield env.timeout(1) 
-
-    def daily_routine(j):
-        while True:
-            print('hello')
+                yield env.timeout(1)
         
 
     ###### Use sales forecast simulation 0 for process simulation (This one will need improvement) #####
     df_sample = df_sim_full[0].copy()
-
     df_sample = df_sample.reset_index()
     df_sample['timeout'] = df_sample['index'].diff().dt.seconds.div(60)
     df_sample['timeout'].fillna(0.0,inplace=True)
@@ -422,31 +585,35 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
     print('Total order: ', total_order)
 
     # simulate the operation process by iterating all resources capacities 
-    for j in range(1, makers_capacity):
-        for k in range(1, cashiers_capacity):
-            for l in range(1, dispatchers_capacity):
-                for m in range(1, riders_capacity):
-                    for n in range(1, csr_capacity):
+    for j in range(1, makers_capacity+1):
+        for k in range(1, cashiers_capacity+1):
+            for l in range(1, dispatchers_capacity+1):
+                for m in range(1, riders_capacity+1):
+                    for n in range(1, csr_capacity+1):
                         # Create simulation enviornment and define resources capacities
                         env = simpy.Environment()
                         i=0
-                        makers = simpy.Resource(env, capacity = j)
-                        cashiers = simpy.Resource(env, capacity = k)
+                        # Define resources for simulation
+                        makers = simpy.PreemptiveResource(env, capacity = j)
+                        cashiers = simpy.PreemptiveResource(env, capacity = k)
                         oven = simpy.Resource(env, capacity=oven_capacity)
-                        dispatchers = simpy.Resource(env, capacity=l)
-                        riders = simpy.Resource(env, capacity = m)
-                        csr = simpy.Resource(env, capacity = n)
-                        #res = MonitoredResource(env, j)
-                        #st.write(res.data)
-                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr))
+                        dispatchers = simpy.PreemptiveResource(env, capacity=l)
+                        riders = simpy.PreemptiveResource(env, capacity = m)
+                        csr = simpy.PreemptiveResource(env, capacity = n)
+                        manager = simpy.PreemptiveResource(env, capacity = manager_capacity)
+
+                        # Define process for simulation
+                        env.process(generate_daily_routine(env,routine_df,ROUTINE_PRIORITY))
+                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario,ORDER_PRIORITY))
+                        env.process(monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario))
                         print('processing...',j,k,l,m,n)
-                        store_opening_time = 8
-                        store_closing_time = 24
-                        total_opening_hours = (store_closing_time - store_opening_time) * 60
+
+                        # Run simulation from defined timeframe
                         env.run(until=total_opening_hours)
                         print('Simulation completed')
 
-                        total_manhour = (j+k+l+m+n)*14+16+8
+                        # Calculate total hours
+                        total_manhour = (j+k+l+m+n)*16+manager_capacity*16+8
                         TPMH = total_order / total_manhour
                         SPMH = df_sample.bill_size.sum() / total_manhour
 
@@ -458,99 +625,108 @@ def run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,ri
                         u14_max = u14_df['total_time'].max()
 
                         # Determine u30 hitrate
-                        deli_df = time_df[time_df['delivery_time']>0]
+                        deli_df = time_df[time_df['delivery_time']>0].drop('scenario',axis=1)
                         total_deli_order = len(deli_df)
                         deli_df['total_time'] = deli_df.sum(axis=1)
                         pass_u30 = deli_df[deli_df['total_time'].sub(deli_df['delivery_return_time']) <= 30]['total_time'].count()
+                        print(pass_u30)
                         u30_hitrate = round((pass_u30/total_deli_order),2)
                         u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
 
                         # Insert data to dataframe
                         scenario_data = pd.DataFrame([[scenario,k,j,l,m,n,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','cashiers','makers','dispatchers','riders','csr','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
                         scenario_kpi_df = scenario_kpi_df.append(scenario_data)
-                        scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - 0.9)
-                        scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - 0.9)
+                        hit_rate_target = 0.9
+                        scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - hit_rate_target)
+                        scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - hit_rate_target)
                         scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
-                        scenario_df[scenario] = time_df
+
+                        # Add date & time to the time column of capacity_df dataframe
+                        start_datetime = datetime.datetime.combine(forecast_date, datetime.time(8,00))
+                        print(start_datetime)
+                        capacity_df['time'] = pd.to_timedelta(capacity_df['time'],unit='m')
+                        capacity_df['time'] = start_datetime + capacity_df['time']
+
+                        scenario_df = scenario_df.append(time_df)
+                        scenario_capacity_df = scenario_capacity_df.append(capacity_df)
+                        scenario_routine_df[scenario] = routine_time_df
                         
+
+    
                         #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
                         #    time_df_plot = px.area(time_df)
                         #    st.plotly_chart(time_df_plot)
-
+                        # st.write(routine_time_df)
                         scenario +=1
-    return scenario_df, scenario_kpi_df
+    return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df
 
-scenario_df, scenario_kpi_df = run_ops_simulation(makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity)
+scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
-
-#st.write(scenario_df[option])
-
-u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate',hover_data=['scenario','u30 max','u14 hitrate','u14 max'])
-col1.plotly_chart(u30_plot,use_container_width=True)
-u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scenario','u14 max','u30 hitrate','u30 max'])
-col2.plotly_chart(u14_plot,use_container_width=True)
 
 # Use minmax scaler to normalize all variable to determine the optimum capacity arrangement
 scaler = MinMaxScaler()
 scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 max trans','SPMH trans','u30 abs var trans','u14 abs var trans']] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate','u30 max','u14 hitrate','u14 max','SPMH', 'u30 absolute var','u14 absolute var']])
 scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.5
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
-st.subheader('Recommended Capcity Arrangements:')
+scenario_kpi_df['classification'] = 'suboptimals'
+scenario_kpi_df.iloc[:3]['classification'] = 'optimums'
+#st.write(scenario_kpi_df)
+
+st.subheader('Recommended Capacity Arrangements:')
 st.write(scenario_kpi_df[['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(3))
 
 # set optimal arrnagement the first line of the dataframe
 optimal = scenario_kpi_df.iloc[0,:]
-optimal_details = scenario_df[optimal.scenario]
+optimal_details = scenario_df[scenario_df.scenario == optimal.scenario]
+
+st.subheader('Resources Usage')
+resample_selection = st.selectbox('View data in different frequency',['T','30T','H'])
+optimal_capacity = scenario_capacity_df[scenario_capacity_df.scenario == optimal.scenario].set_index('time').groupby('resource_name').resample(resample_selection).max()
+optimal_capacity = optimal_capacity.reset_index(level=0,drop=True)
+st.write(optimal_capacity)
+capacity_plot = px.area(optimal_capacity,x=optimal_capacity.index,y='occupied_quantities',color='resource_name')
+st.plotly_chart(capacity_plot)
+
+st.subheader('Tasks / Orders in queue')
+pending_tasks_plt = px.area(optimal_capacity,x=optimal_capacity.index,y='tasks_in_queue',color='resource_name')
+st.plotly_chart(pending_tasks_plt)
+
+# plot distribution and show optimal on chart
+u30_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u30 hitrate',hover_data=['scenario','u30 max','u14 hitrate','u14 max'],color='classification')
+col1.plotly_chart(u30_plot,use_container_width=True)
+u14_plot = px.scatter(scenario_kpi_df,x='SPMH',y='u14 hitrate',hover_data=['scenario','u14 max','u30 hitrate','u30 max'],color='classification')
+col2.plotly_chart(u14_plot,use_container_width=True)
 
 # plot simulation time chart at optimal level
-time_df_plot = px.area(optimal_details)
+st.write(optimal_details)
+time_df_plot = px.area(optimal_details.drop('scenario',axis=1))
 st.plotly_chart(time_df_plot)
 
-# Resample the scenario into 30mins timeframe and determine the manpower requirement in every 30mins
-occupancy_30m = scenario_df[optimal.scenario].resample('30min').sum() / 30
-manpower_requirement = occupancy_30m[['cashier_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','make_time','dispatch_time','delivery_time','delivery_return_time']]
-manpower_requirement['csr_time'] = manpower_requirement['foh_dinein_dispatch_time'] + manpower_requirement['foh_pickup_dispatch_time'] + manpower_requirement['foh_table_cleaning_time']
-manpower_requirement['rider_time'] = manpower_requirement['delivery_time'] + manpower_requirement['delivery_return_time']
-manpower_requirement = manpower_requirement.drop(['delivery_time','delivery_return_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time'],axis=1)
-
-# Set ceiling of each column equal to the optimal manpower requirement
-manpower_requirement['make_time'] = manpower_requirement['make_time'].clip(0,scenario_kpi_df.iloc[0,:]['makers'])
-manpower_requirement['cashier_time'] = manpower_requirement['cashier_time'].clip(0,scenario_kpi_df.iloc[0,:]['cashiers'])
-manpower_requirement['csr_time'] = manpower_requirement['csr_time'].clip(0,scenario_kpi_df.iloc[0,:]['csr'])
-manpower_requirement['dispatch_time'] = manpower_requirement['dispatch_time'].clip(0,scenario_kpi_df.iloc[0,:]['dispatchers'])
-manpower_requirement['rider_time'] = manpower_requirement['rider_time'].clip(0,scenario_kpi_df.iloc[0,:]['riders'])
-
-st.write(manpower_requirement)
-occupancy_30m_plt = px.area(manpower_requirement)
-st.plotly_chart(occupancy_30m_plt)
-
-# Preprocess dataframe ready for roster optimization
-# Shifting time index by -60mins for roster to cater for TM preparation (30mins), ready for demand (30mins)
-roster_df = manpower_requirement.shift(periods=-30,freq='min')
-# factorize all requirement by 80% to prevent overstaffing
-# roster_df = roster_df * 0.8
+# Restructure capacity_df for optimization
+roster_df = optimal_capacity.pivot_table(index='time',columns='resource_name',values='occupied_quantities',aggfunc='max')
 st.write(roster_df)
 
 # Run Linear Programming on each station
-make_roster, make_schedule = optimize_labour(roster_df, 'make_time')
-rider_roster, rider_schedule = optimize_labour(roster_df,'rider_time')
-cashier_roster, cashier_schedule = optimize_labour(roster_df,'cashier_time')
-dispatcher_roster, dispatcher_schedule = optimize_labour(roster_df,'dispatch_time')
-csr_roster, csr_schedule = optimize_labour(roster_df,'csr_time')
-merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster],axis=1)
-st.write(merged_roster)
+make_roster, make_schedule = optimize_labour(roster_df, 'makers')
+rider_roster, rider_schedule = optimize_labour(roster_df,'riders')
+cashier_roster, cashier_schedule = optimize_labour(roster_df,'cashiers')
+dispatcher_roster, dispatcher_schedule = optimize_labour(roster_df,'dispatcher')
+csr_roster, csr_schedule = optimize_labour(roster_df,'csr')
+mgnt_roster, mgnt_schedule = optimize_labour(roster_df,'manager')
+merged_roster = pd.concat([cashier_roster, csr_roster, make_roster, dispatcher_roster, rider_roster,mgnt_roster],axis=1)
+#st.write(merged_roster)
 
 # Generate roster schedule chart
-merged_schedule = pd.concat([make_schedule,rider_schedule,cashier_schedule,dispatcher_schedule,csr_schedule])
+merged_schedule = pd.concat([make_schedule,rider_schedule,cashier_schedule,dispatcher_schedule,csr_schedule,mgnt_schedule])
 merged_schedule.reset_index(drop=True, inplace=True)
-st.write(merged_schedule)
+#st.write(merged_schedule)
 schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
 st.plotly_chart(schedule_plt)
 hours_per_shift = 4
 final_MH = merged_roster.sum() * hours_per_shift
 
 # Conclude the final SPMH and MH from optimal schedule
-st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum() +16+8),0))
-st.write('Total hours arranged: ', final_MH.sum()+16+8)
+st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum()+8),0))
+st.write('Total hours arranged: ', final_MH.sum()+8)
