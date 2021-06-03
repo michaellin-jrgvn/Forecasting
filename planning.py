@@ -315,6 +315,11 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
     scenario_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     scenario_routine_df = {}
 
+    # Task priority setting
+    ORDER_PRIORITY = -1
+    DOUGH_PRIORITY = 1
+    ROUTINE_PRIORITY = 3
+
     def generate_order(i):
         if i <= len(df_sample):
             timeout = df_sample.loc[i,['timeout']].values[0]
@@ -322,24 +327,24 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         return timeout
 
     # set up function to generate routine work
-    def generate_daily_routine(env, routine_df):
+    def generate_daily_routine(env, routine_df, priority):
         # print('Running daily routine')
         for index, row in routine_df.iterrows():
             # print('running {}'.format(row['tasks']))
             yield env.timeout(row['time_out'])
-            env.process(process_routine(env,row['duration'],row,index))
+            env.process(process_routine(env,row['duration'],row,index,priority))
     
-    def process_routine(env, task_duration, row,index):
+    def process_routine(env, task_duration, row,index, priority):
         get_resources = row[0]
         resource_dict = {
-            'BOH': [makers,dispatchers,riders],
-            'FOH': [csr,cashiers],
+            'BOH': [makers,dispatchers,manager,riders],
+            'FOH': [csr,cashiers,manager],
             'MOD': [manager],
             'MGNT': [manager],
             'ALL': [dispatchers,makers,riders,csr,cashiers,manager]
         }
         resource_str_dict ={
-            'BOH': ['riders','makers','dispatchers','manager'],
+            'BOH': ['maker','dispatchers','manager','riders'],
             'FOH': ['csr','cashiers','manager'],
             'MOD': ['manager'],
             'MGNT': ['manager'],
@@ -348,17 +353,26 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         available_resources = resource_dict[get_resources]
         capacity_str = resource_str_dict[get_resources]
         for count, resource in enumerate(available_resources):
-            if resource.count >=  globals()['{}_capacity'.format(capacity_str[count])]:
+            if resource.count ==  resource.capacity:
+                print('{} is busy to handle {}. Swapping to the next resources'.format(capacity_str[count],row['tasks']))
                 continue
             else:
-                with resource.request() as request:
-                    routine_start_time = env.now
-                    # print('getting {} to {}'.format(capacity_str[count],row['tasks']))
-                    yield request
-                    yield env.timeout(task_duration)
-                    routine_duration = env.now - routine_start_time
-                routine_time_df.iloc[index][capacity_str[count]] = routine_duration
+                done_in = task_duration
+                while done_in:
+                    with resource.request(priority=priority) as request:
+                        routine_start_time = env.now
+                        yield request
+                        try:
+                            print('getting {} to {}'.format(capacity_str[count],row['tasks']))
+                            yield env.timeout(task_duration)
+                            routine_duration = env.now - routine_start_time
+                            routine_time_df.iloc[index][capacity_str[count]] = routine_duration
+                            done_in = 0
+                        except simpy.Interrupt:
+                            print('{} interrupted'.format(row['tasks']))
+                            done_in-= env.now - routine_start_time
                 break
+
     
     def monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario):
         for i in range(0,total_opening_hours+1):
@@ -369,7 +383,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             yield env.timeout(1)
             
 
-    def cashier(env, cashiers, i, channel,scenario):
+    def cashier(env, cashiers, i, channel,scenario,priority):
         if channel == 'Delivery':
             time_df.iloc[i]['cashier_time'] = 0
         else:
@@ -378,39 +392,39 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             if cashiers.count == cashiers.capacity:
                 # However, if manager is busy, pass it back to cashier to handle
                 if manager.count == manager.capacity:
-                    with cashiers.request() as request:
+                    with cashiers.request(priority=priority,preempt=False) as request:
                         yield request
                         yield env.timeout(random.randint(1,3))
                 else:
-                    with manager.request() as request:
+                    with manager.request(priority=priority,preempt=False) as request:
                         yield request
                         yield env.timeout(1) # Manager takes 1 min to walk to the station to support
                         yield env.timeout(random.randint(1,3))
             else:
-                with cashiers.request() as request:
+                with cashiers.request(priority=priority,preempt=False) as request:
                     yield request
                     yield env.timeout(random.randint(1,3))
             time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['cashier_time'] = env.now-start_time
 
-    def boh_process_order(env, makers, oven, i, channel,scenario):
+    def boh_process_order(env, makers, oven, i, channel,scenario,priority):
         make_start_time = env.now
         # if makers are busy, get manager support
         if makers.count == makers.capacity:
             # However, if manager is busy, pass it back to makers to handle
             if manager.count == manager.capacity:
-                with makers.request() as request:
+                with makers.request(priority=priority,preempt=False) as request:
                     yield request
                     #print('Total makers occupied: ', makers.count)
                     #print('Order making in process ', i)
                     yield env.timeout(random.randint(2,3))                
             else:
-                with manager.request() as request:
+                with manager.request(priority=priority,preempt=False) as request:
                     yield request
                     yield env.timeout(1) # Manager takes 1 min to walk to the station to support
                     yield env.timeout(random.randint(2,3))
         else:
-            with makers.request() as request:
+            with makers.request(priority=priority,preempt=False) as request:
                 yield request
                 #print('Total makers occupied: ', makers.count)
                 #print('Order making in process ', i)
@@ -428,20 +442,20 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         if dispatchers.count == dispatchers.capacity:
             dispatch_start_time = env.now
             if manager.count == manager.capacity:
-                with dispatchers.request() as request:
+                with dispatchers.request(priority=priority,preempt=False) as request:
                     dispatch_start_time = env.now
                     yield request
                     #print('cut, pack and dispatch')
                     yield env.timeout(2)
                     dispatch_end_time = env.now
             else:
-                with manager.request() as request:
+                with manager.request(priority=priority,preempt=False) as request:
                     yield request
                     yield env.timeout(1) # Manager takes 1 min to talk to the station to support
                     yield env.timeout(2)
                     dispatch_end_time = env.now
         else:
-            with dispatchers.request() as request:
+            with dispatchers.request(priority=priority,preempt=False) as request:
                 dispatch_start_time = env.now
                 yield request
                 #print('cut, pack and dispatch')
@@ -451,7 +465,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         time_df.iloc[i]['dispatch_time'] = env.now-dispatch_start_time
 
         if channel == 'Delivery':
-            with riders.request() as request:
+            with riders.request(priority=priority,preempt=False) as request:
                 drive_time = random.randint(4,10)
                 customer_waiting_time = random.randint(3,5)
                 yield request
@@ -472,23 +486,23 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             time_df.iloc[i]['delivery_time'] = 0
             time_df.iloc[i]['delivery_return_time'] = 0
     
-    def foh_order(env, csr, cashiers, i, channel,scenario):
+    def foh_order(env, csr, cashiers, i, channel,scenario,priority):
         if channel == 'Dinein':
             foh_service_time = env.now
             if csr.count == csr.capacity:
                 if manager.count == manager.capacity:
-                    with csr.request() as request:
+                    with csr.request(priority=priority,preempt=False) as request:
                         busing_time = 1
                         yield request
                         yield env.timeout(busing_time)
                 else:
-                    with manager.request() as request:
+                    with manager.request(priority=priority,preempt=False) as request:
                         busing_time = 1
                         yield request
                         yield env.timeout(1) # Manager takes 1 min to walk to the station to support
                         yield env.timeout(busing_time)
             else:
-                with csr.request() as request:
+                with csr.request(priority=priority,preempt=False) as request:
                     busing_time = 1
                     yield request
                     yield env.timeout(busing_time)
@@ -501,7 +515,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             # Customer Departure, clean up and table set up
             if csr.count == csr.capacity:
                 if manager.count == manager.capacity:
-                    with csr.request() as request:
+                    with csr.request(priority=priority,preempt=False) as request:
                         clean_up_request = env.now
                         cleaning_time = np.random.randint(3,5)
                         table_set_up_time = np.random.randint(2,3)
@@ -509,7 +523,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         yield env.timeout(cleaning_time)
                         yield env.timeout(table_set_up_time)    
                 else:
-                    with manager.request() as request:
+                    with manager.request(priority=priority,preempt=False) as request:
                         clean_up_request = env.now
                         cleaning_time = np.random.randint(3,5)
                         table_set_up_time = np.random.randint(2,3)
@@ -518,7 +532,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         yield env.timeout(cleaning_time)
                         yield env.timeout(table_set_up_time)                    
             else:
-                with csr.request() as request:
+                with csr.request(priority=priority,preempt=False) as request:
                     clean_up_request = env.now
                     cleaning_time = np.random.randint(3,5)
                     table_set_up_time = np.random.randint(2,3)
@@ -529,7 +543,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             time_df.iloc[i]['foh_table_cleaning_time'] = env.now - clean_up_request
         elif channel == 'Pickup':
             foh_pickup_dispatch = env.now
-            with cashiers.request() as request:
+            with cashiers.request(priority=priority,preempt=False) as request:
                 foh_dispatch = random.randint(1,2)
                 yield request
                 yield env.timeout(foh_dispatch)
@@ -543,7 +557,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             time_df.iloc[i]['foh_dinein_dispatch_time'] = 0
             time_df.iloc[i]['foh_table_cleaning_time'] = 0
 
-    def new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario):
+    def new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario,priority):
         print('store opening at {}'.format(env.now))
         yield env.timeout(120)
         print('opening for business at {}'.format(env.now))
@@ -552,9 +566,9 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                 yield env.timeout(generate_order(i))
                 #print('running order',i)
                 channel = df_sample.loc[i,['channel']].values[0]
-                env.process(cashier(env,cashiers,i,channel,scenario))
-                env.process(boh_process_order(env,makers,oven,i,channel,scenario))
-                env.process(foh_order(env,csr,cashiers,i,channel,scenario))
+                env.process(cashier(env,cashiers,i,channel,scenario,priority))
+                env.process(boh_process_order(env,makers,oven,i,channel,scenario,priority))
+                env.process(foh_order(env,csr,cashiers,i,channel,scenario,priority))
                 i+=1
             else:
                 yield env.timeout(1)
@@ -580,17 +594,17 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         env = simpy.Environment()
                         i=0
                         # Define resources for simulation
-                        makers = simpy.Resource(env, capacity = j)
-                        cashiers = simpy.Resource(env, capacity = k)
+                        makers = simpy.PreemptiveResource(env, capacity = j)
+                        cashiers = simpy.PreemptiveResource(env, capacity = k)
                         oven = simpy.Resource(env, capacity=oven_capacity)
-                        dispatchers = simpy.Resource(env, capacity=l)
-                        riders = simpy.Resource(env, capacity = m)
-                        csr = simpy.Resource(env, capacity = n)
-                        manager = simpy.Resource(env, capacity = manager_capacity)
+                        dispatchers = simpy.PreemptiveResource(env, capacity=l)
+                        riders = simpy.PreemptiveResource(env, capacity = m)
+                        csr = simpy.PreemptiveResource(env, capacity = n)
+                        manager = simpy.PreemptiveResource(env, capacity = manager_capacity)
 
                         # Define process for simulation
-                        env.process(generate_daily_routine(env,routine_df))
-                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario))
+                        env.process(generate_daily_routine(env,routine_df,ROUTINE_PRIORITY))
+                        env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario,ORDER_PRIORITY))
                         env.process(monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario))
                         print('processing...',j,k,l,m,n)
 
