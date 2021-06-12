@@ -42,7 +42,7 @@ def read_col_files():
         # drop duplicates
         col = col.drop_duplicates(subset=['Actual sales','Total COL $ (included Holiday and paid leave days)'])
         trans = trans.drop_duplicates(subset=['date','shopcode','Sale','Trans'])
-        # col['Date'] = pd.to_datetime(col['Date'])
+        col['Date'] = pd.to_datetime(col['Date'],errors='coerce')
         col = col.fillna(0)
     return col, trans
 

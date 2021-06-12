@@ -1,3 +1,4 @@
+from re import A
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -87,6 +88,62 @@ def resample_ta(resample, sales, tc):
     #all_channels_ta_df = remove_closing_hours(all_channels_ta_df)
     return all_channels_ta_df
 
+@st.cache()
+def loop_simulation(simulation_df):
+    df_sim_full = {}
+    df_sim_sum = pd.DataFrame()
+    loop = 1000
+    for i in range(loop):
+        df_sim_full[i] = simulation_df(df)
+        agg_h=df_sim_full[i].resample('H').sum()
+        plt_sales.add_trace(go.Scatter(x=agg_h.index,y=agg_h.bill_size,mode='markers'))
+        my_bar.progress((i+1)/loop)
+        df_sim_sum = df_sim_sum.append(agg_h.sum(),ignore_index=True)
+    return df_sim_full, agg_h, plt_sales, df_sim_sum
+
+def simulation_df(df):
+    channels = ['Dinein','Pickup','Delivery']
+    simulation_df = pd.DataFrame()
+    for channel in channels:
+        ## Assign random minutes for each row
+        # Preprocessing
+        df['{} - TC'.format(channel)] = df['{} - TC'.format(channel)].round(0).astype('int')
+
+        # Set up to generate random TC using expovariate Distribution
+        #lambda_tc = 1/ df['{} - TC'.format(channel)][['{} - TC_y_final'.format(channel)]].mean()
+        #df['{} - TC'.format(channel)]['simulate_TC'] = int(random.expovariate(lambda_tc))
+
+        # Setup to generate random TC using log normal distribution
+        mu_tc  = np.log(df['{} - TC'.format(channel)][['{} - TC_y_final'.format(channel)]].to_numpy()[:,0])
+        sigma_tc = np.log(df['{} - TC'.format(channel)]['{} - TC_y_final'.format(channel)]).std()
+        df['{} - TC'.format(channel)]['simulate_TC'] = np.random.lognormal(mu_tc, sigma_tc).round(0).astype('int')
+
+        # Duplicate rows based on projected TC / hour
+        repeat_array = df['{} - TC'.format(channel)].reset_index()[['simulate_TC']].to_numpy()[:,0]
+        channel_preprocess_df = df['{} - TC'.format(channel)].loc[df['{} - TC'.format(channel)].index.repeat(repeat_array)]
+
+        # Assign random minutes for each ticket and sort according to time
+        channel_preprocess_df['minutes'] = np.random.randint(0, 59, channel_preprocess_df.shape[0])
+        channel_preprocess_df.index= channel_preprocess_df.index + pd.to_timedelta(channel_preprocess_df[['minutes']].to_numpy()[:,0], unit='m')
+        channel_preprocess_df = channel_preprocess_df.sort_index()
+
+        # Duplicate same number of row in ta dataframe as tc dataframe
+        dinein_ta_df = df['{} - TA'.format(channel)].loc[df['{} - TA'.format(channel)].index.repeat(repeat_array)]
+        dinein_ta_df.index = channel_preprocess_df.index
+
+        # Set up to generate random TA using normal Distribution
+        mu_ta = dinein_ta_df['{} - TA_y_final'.format(channel)]
+        sigma_ta = dinein_ta_df['{} - TA_y_final'.format(channel)].std()
+        channel_preprocess_df['bill_size'] = np.random.normal(mu_ta,sigma_ta).clip(dinein_ta_df['{} - TA_y_lower'.format(channel)],dinein_ta_df['{} - TA_y_upper'.format(channel)]).round(0).astype(int)
+        
+        # Remove all unnecessary columns except index and bill_size and add channel Details
+        channel_preprocess_df = channel_preprocess_df[['bill_size']]
+        channel_preprocess_df['channel'] = channel
+        simulation_df = pd.concat([simulation_df, channel_preprocess_df])
+        simulation_df = simulation_df.sort_index()
+
+    return simulation_df
+
 # Retreive store info
 store_info = store_code()
 
@@ -124,160 +181,131 @@ channels_split_df['Delivery - TA'] = resample_ta(select_resample, channels_split
 display_details = st.sidebar.checkbox('display forecast details')
 
 # Set up date-picker
-forecast_date = st.sidebar.date_input('Select Forecast Range',min_value=channels_split_df['Dinein - Sales'].index.max())
+forecast_date = st.sidebar.date_input('Select Forecast Range')
 
-# Setting up sales Forecast by channel, by TC, by TA
-df = {}
-df_full = pd.DataFrame()
-for df_display in list(channels_split_df):
+# If the date is the future date with no data, prophet will be used to forecast, otherwise, historical data will be used for process simulation
 
-    # Preprocess and transform dataframe
-    df_fit = channels_split_df[df_display].reset_index()
-    df_fit = df_fit.rename(columns={'datetime':'ds','bill_size':'y_original'})
-    df_fit = df_fit[df_fit['y_original'] > 0]
-    df_fit = df_fit.set_index('ds')
-    df_fit['y'], transform_lambda = boxcox(df_fit['y_original'])
-    
-    # Get dataframe ready to fit Prophet
-    df_fit = df_fit.reset_index()
-    df_transform = df_fit[['ds','y']]
+if forecast_date >= channels_split_df['Dinein - Sales'].index.max():
 
-    # Fit and predict using FB Prophet Model
-    fit_m = fit_model(df_transform, select_resample, 'multiplicative')
-    pred_m = predict_model(fit_m, forecast_date , forecast_date + datetime.timedelta(days=1), select_resample)
+    # Setting up sales Forecast by channel, by TC, by TA
+    df = {}
+    df_full = pd.DataFrame()
+    for df_display in list(channels_split_df):
 
-    pred_m = pred_m.set_index('ds')
-    pred_m[['yhat_lower_f','yhat_upper_f','y_final']] = inv_boxcox(pred_m[['yhat_lower','yhat_upper','yhat']], transform_lambda)
-
-    # Setup empty dataframe for future merge
-    df_full['ds'] = pred_m.index
-    df_full = df_full.set_index('ds')
-
-    df['{}'.format(df_display)] = pred_m[['yhat_lower_f','yhat_upper_f','y_final']]
-    df['{}'.format(df_display)].fillna(method='ffill',inplace=True)
-    df['{}'.format(df_display)] = df['{}'.format(df_display)].rename(columns={'yhat_lower_f':'{}_y_lower'.format(df_display), 'yhat_upper_f':'{}_y_upper'.format(df_display), 'y_final':'{}_y_final'.format(df_display)})
-    df_full = pd.concat([df_full, df['{}'.format(df_display)]],axis=1)
-
-sales_col_opt = df_full.filter(like='Sales_y_final')
-sales_col_opt.columns = ['Dinein','Pickup','Delivery']
-sales_col_opt['Total Sales'] = sales_col_opt.sum(axis=1)
-plt_sales = px.line(sales_col_opt,x=sales_col_opt.index, y='Total Sales')
-# st.plotly_chart(plt_sales,use_container_width=True)
-forecast_daily_sales = int(sales_col_opt['Total Sales'].sum())
-st.write('Total Sales of the day is: ', forecast_daily_sales)
-
-def simulation_df(df):
-    channels = ['Dinein','Pickup','Delivery']
-    simulation_df = pd.DataFrame()
-    for channel in channels:
-        ## Assign random minutes for each row
-        # Preprocessing
-        df['{} - TC'.format(channel)] = df['{} - TC'.format(channel)].round(0).astype('int')
-
-        # Setup to generate random TC using normal distribution
-        mu_tc  = np.log(df['{} - TC'.format(channel)][['{} - TC_y_final'.format(channel)]].to_numpy()[:,0])
-        sigma_tc = np.log(df['{} - TC'.format(channel)]['{} - TC_y_final'.format(channel)]).std()
-        df['{} - TC'.format(channel)]['simulate_TC'] = np.random.lognormal(mu_tc, sigma_tc).round(0).astype('int')
-
-        # Duplicate rows based on projected TC / hour
-        repeat_array = df['{} - TC'.format(channel)].reset_index()[['simulate_TC']].to_numpy()[:,0]
-        channel_preprocess_df = df['{} - TC'.format(channel)].loc[df['{} - TC'.format(channel)].index.repeat(repeat_array)]
-
-        # Assign random minutes for each ticket and sort according to time
-        channel_preprocess_df['minutes'] = np.random.randint(0, 59, channel_preprocess_df.shape[0])
-        channel_preprocess_df.index= channel_preprocess_df.index + pd.to_timedelta(channel_preprocess_df[['minutes']].to_numpy()[:,0], unit='m')
-        channel_preprocess_df = channel_preprocess_df.sort_index()
-
-        # Duplicate same number of row in ta dataframe as tc dataframe
-        dinein_ta_df = df['{} - TA'.format(channel)].loc[df['{} - TA'.format(channel)].index.repeat(repeat_array)]
-        dinein_ta_df.index = channel_preprocess_df.index
-
-        # Set up to generate random TA using normal Distribution
-        mu_ta = dinein_ta_df['{} - TA_y_final'.format(channel)]
-        sigma_ta = dinein_ta_df['{} - TA_y_final'.format(channel)].std()
-        channel_preprocess_df['bill_size'] = np.random.normal(mu_ta,sigma_ta).clip(dinein_ta_df['{} - TA_y_lower'.format(channel)],dinein_ta_df['{} - TA_y_upper'.format(channel)]).round(0).astype(int)
+        # Preprocess and transform dataframe
+        df_fit = channels_split_df[df_display].reset_index()
+        df_fit = df_fit.rename(columns={'datetime':'ds','bill_size':'y_original'})
+        df_fit = df_fit[df_fit['y_original'] > 0]
+        df_fit = df_fit.set_index('ds')
+        df_fit['y'], transform_lambda = boxcox(df_fit['y_original'])
         
-        # Remove all unnecessary columns except index and bill_size and add channel Details
-        channel_preprocess_df = channel_preprocess_df[['bill_size']]
-        channel_preprocess_df['channel'] = channel
-        simulation_df = pd.concat([simulation_df, channel_preprocess_df])
-        simulation_df = simulation_df.sort_index()
-    return simulation_df
+        # Get dataframe ready to fit Prophet
+        df_fit = df_fit.reset_index()
+        df_transform = df_fit[['ds','y']]
 
-@st.cache()
-def loop_simulation(simulation_df):
-    df_sim_full = {}
-    df_sim_sum = pd.DataFrame()
-    loop = 10
-    for i in range(loop):
-        df_sim_full[i] = simulation_df(df)
-        agg_h=df_sim_full[i].resample('H').sum()
-        plt_sales.add_trace(go.Scatter(x=agg_h.index,y=agg_h.bill_size,mode='markers'))
-        my_bar.progress((i+1)/loop)
-        df_sim_sum = df_sim_sum.append(agg_h.sum(),ignore_index=True)
-    return df_sim_full, agg_h, plt_sales, df_sim_sum
+        # Fit and predict using FB Prophet Model
+        fit_m = fit_model(df_transform, select_resample, 'multiplicative')
+        pred_m = predict_model(fit_m, forecast_date , forecast_date + datetime.timedelta(days=1), select_resample)
 
-my_bar = st.progress(0)
-df_sim_full, agg_h, plt_sales, df_sim_sum = loop_simulation(simulation_df)
-st.write(df_sim_sum.describe())
-sim_sum_hist = px.histogram(df_sim_sum, x='bill_size')
-st.plotly_chart(plt_sales, use_container_width=True)
-st.plotly_chart(sim_sum_hist, use_container_width=True)
+        pred_m = pred_m.set_index('ds')
+        pred_m[['yhat_lower_f','yhat_upper_f','y_final']] = inv_boxcox(pred_m[['yhat_lower','yhat_upper','yhat']], transform_lambda)
 
-if display_details:
+        # Setup empty dataframe for future merge
+        df_full['ds'] = pred_m.index
+        df_full = df_full.set_index('ds')
 
-    # Plot normal chart without seasonal decompose
-    channels_plot = px.line(channels_split_df[df_display])
-    channels_plot.update_layout(height=300)
-    st.plotly_chart(channels_plot)
-    
-    st.write(df_fit)
-    
-    # Display data distribution before and after transformation
-    dist_plot = make_subplots(rows=2, cols=1)
-    dist_plot.add_trace(go.Histogram(x=df_fit['y']),row=1,col=1)
-    dist_plot.add_trace(go.Histogram(x=df_fit['y_original']), row=2,col=1)
-    st.plotly_chart(dist_plot, use_container_width=True)
+        df['{}'.format(df_display)] = pred_m[['yhat_lower_f','yhat_upper_f','y_final']]
+        df['{}'.format(df_display)].fillna(method='ffill',inplace=True)
+        df['{}'.format(df_display)] = df['{}'.format(df_display)].rename(columns={'yhat_lower_f':'{}_y_lower'.format(df_display), 'yhat_upper_f':'{}_y_upper'.format(df_display), 'y_final':'{}_y_final'.format(df_display)})
+        df_full = pd.concat([df_full, df['{}'.format(df_display)]],axis=1)
 
-    # Display fitting, tends, seasonalities
-    fig1 = fit_m.plot(pred_m)
-    st.write(fig1)
-    fig2 = fit_m.plot_components(pred_m)
-    st.write(fig2)
-    st.write(pred_m)
+    sales_col_opt = df_full.filter(like='Sales_y_final')
+    sales_col_opt.columns = ['Dinein','Pickup','Delivery']
+    sales_col_opt['Total Sales'] = sales_col_opt.sum(axis=1)
+    plt_sales = px.line(sales_col_opt,x=sales_col_opt.index, y='Total Sales')
+    # st.plotly_chart(plt_sales,use_container_width=True)
+    forecast_daily_sales = int(sales_col_opt['Total Sales'].sum())
+    st.write('Total Sales of the day is: ', forecast_daily_sales)
 
-    def mape(actual, forecast):
-        mape = abs((actual-forecast)/forecast) * 100
-        return mape
-    def mae(actual, forecast):
-        mae = abs(actual-forecast)
-        return mae
-    pred_m = pred_m.reset_index()
+    my_bar = st.progress(0)
+    df_sim_full, agg_h, plt_sales, df_sim_sum = loop_simulation(simulation_df)
+    st.write(df_sim_sum.describe())
+    sim_sum_hist = px.histogram(df_sim_sum, x='bill_size')
+    st.plotly_chart(plt_sales, use_container_width=True)
+    st.plotly_chart(sim_sum_hist, use_container_width=True)
 
-    mape = mape(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
-    mae = mae(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
-    diff_df = pd.DataFrame(data=[df_fit['y_original'],pred_m['y_final']] ).T
-    diff_df['mape'] = diff_df['y_final'].sub(diff_df['y_original']).div(diff_df['y_original']).mul(100)
-    st.write(diff_df)
-    st.write(mape.describe())
-    st.write(mae.describe())
+    if display_details:
 
+        # Plot normal chart without seasonal decompose
+        channels_plot = px.line(channels_split_df[df_display])
+        channels_plot.update_layout(height=300)
+        st.plotly_chart(channels_plot)
+        
+        st.write(df_fit)
+        
+        # Display data distribution before and after transformation
+        dist_plot = make_subplots(rows=2, cols=1)
+        dist_plot.add_trace(go.Histogram(x=df_fit['y']),row=1,col=1)
+        dist_plot.add_trace(go.Histogram(x=df_fit['y_original']), row=2,col=1)
+        st.plotly_chart(dist_plot, use_container_width=True)
+
+        # Display fitting, tends, seasonalities
+        fig1 = fit_m.plot(pred_m)
+        st.write(fig1)
+        fig2 = fit_m.plot_components(pred_m)
+        st.write(fig2)
+        st.write(pred_m)
+
+        def mape(actual, forecast):
+            mape = abs((actual-forecast)/forecast) * 100
+            return mape
+        def mae(actual, forecast):
+            mae = abs(actual-forecast)
+            return mae
+        pred_m = pred_m.reset_index()
+
+        mape = mape(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
+        mae = mae(pred_m['y_final'].iloc[:len(df_fit)],df_fit['y_original']).dropna()
+        diff_df = pd.DataFrame(data=[df_fit['y_original'],pred_m['y_final']] ).T
+        diff_df['mape'] = diff_df['y_final'].sub(diff_df['y_original']).div(diff_df['y_original']).mul(100)
+        st.write(diff_df)
+        st.write(mape.describe())
+        st.write(mae.describe())
+
+    # Set simulation dataframe
+    sales_process_sim_df = df_sim_full[0]
+    st.write(df_sim_full[0])
+
+else:
+    # Use selected_store_df to preprocess ready for simulation_df
+    sales_process_sim_df = selected_store_df.loc[forecast_date:forecast_date + datetime.timedelta(days=1)][['bill_size','channel']]
+    st.write(sales_process_sim_df)
+    hist_sim_plt= sales_process_sim_df.groupby('channel').resample('H').sum()
+    hist_sim_plt = hist_sim_plt.reset_index('channel', drop=False)
+    hist_sim_pivot = pd.pivot_table(hist_sim_plt,columns='channel',values='bill_size',index=hist_sim_plt.index).fillna(0)
+    st.write(hist_sim_pivot)
+    historical_channel_sales_plt = px.area(hist_sim_plt,y='bill_size',color='channel')
+    st.plotly_chart(historical_channel_sales_plt, use_container_width=True)
 
 # Obtain COL data from COL_functions
 
 col, trans = read_col_files()
 filtered_data, filtered_trans = data_filter(col, trans, [selected_store])
 df = filtered_data_merged(filtered_data, filtered_trans, store_info).sort_values(by='Date',ascending=False).set_index('Date')
-df = df.iloc[-60:].reset_index()
+df = df.reset_index()
 df['dis_Date'] = df['Date'].apply(lambda x: x.strftime("%d %b, %Y"))
 spmh_store_plt = px.scatter(df, x='Actual sales',y='Actual SPMH',color='Store Name',trendline='ols', hover_data=['dis_Date'])
 st.plotly_chart(spmh_store_plt)
+
 regression_table = regression_table(spmh_store_plt, 'Store Name')
 st.write(regression_table)
-forecast_spmh = regression_table.Gradient * df_sim_sum.bill_size.mean() + regression_table['y-intercept']
+forecast_spmh = regression_table.Gradient * sales_process_sim_df.bill_size.sum() + regression_table['y-intercept']
 st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
-manhour_allowed = df_sim_sum.bill_size.mean() / forecast_spmh
+manhour_allowed = sales_process_sim_df.bill_size.sum() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
+actual_spmh = df[df['Date'].dt.date == forecast_date][['Actual SPMH','Total actual hours (included Holiday and paid leave days)']]
+st.write(actual_spmh)
+        
 
 # Define store maximum capacity
 makers_capacity = 2
@@ -302,12 +330,11 @@ routine_df = get_routine_tasks()
 
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date):
-
+def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date,sales_process_sim_df):
     # setting up empty dataframes for record
     scenario = 0
     random.seed(42)
-    time_df = pd.DataFrame(index=df_sim_full[0].index, columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
+    time_df = pd.DataFrame(index=sales_process_sim_df.index, columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
     capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['csr','cashiers','dispatchers','makers','riders','manager'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
@@ -575,9 +602,9 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         
 
     ###### Use sales forecast simulation 0 for process simulation (This one will need improvement) #####
-    df_sample = df_sim_full[0].copy()
+    df_sample = sales_process_sim_df.copy()
     df_sample = df_sample.reset_index()
-    df_sample['timeout'] = df_sample['index'].diff().dt.seconds.div(60)
+    df_sample['timeout'] = df_sample.iloc[:,0].diff().dt.seconds.div(60)
     df_sample['timeout'].fillna(0.0,inplace=True)
     total_order = len(df_sample)
 
@@ -650,9 +677,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         scenario_df = scenario_df.append(time_df)
                         scenario_capacity_df = scenario_capacity_df.append(capacity_df)
                         scenario_routine_df[scenario] = routine_time_df
-                        
-
-    
+                           
                         #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
                         #    time_df_plot = px.area(time_df)
                         #    st.plotly_chart(time_df_plot)
@@ -660,7 +685,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         scenario +=1
     return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df
 
-scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date)
+scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date,sales_process_sim_df)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scneario:', range(len(scenario_df)))
@@ -682,8 +707,9 @@ optimal = scenario_kpi_df.iloc[0,:]
 optimal_details = scenario_df[scenario_df.scenario == optimal.scenario]
 
 st.subheader('Resources Usage')
-resample_selection = st.selectbox('View data in different frequency',['T','30T','H'])
+resample_selection = st.selectbox('View data in different frequency',['30T','T','H'])
 optimal_capacity = scenario_capacity_df[scenario_capacity_df.scenario == optimal.scenario].set_index('time').groupby('resource_name').resample(resample_selection).max()
+optimal_capacity[['occupied_quantities','tasks_in_queue']] = optimal_capacity[['occupied_quantities','tasks_in_queue']]
 optimal_capacity = optimal_capacity.reset_index(level=0,drop=True)
 st.write(optimal_capacity)
 capacity_plot = px.area(optimal_capacity,x=optimal_capacity.index,y='occupied_quantities',color='resource_name')
@@ -728,5 +754,5 @@ hours_per_shift = 4
 final_MH = merged_roster.sum() * hours_per_shift
 
 # Conclude the final SPMH and MH from optimal schedule
-st.write('Final SPMH based on roster: ',round(df_sim_sum.bill_size.mean()/(final_MH.sum()+8),0))
+st.write('Final SPMH based on roster: ',round(sales_process_sim_df['bill_size'].sum()/(final_MH.sum()+8),0))
 st.write('Total hours arranged: ', final_MH.sum()+8)
