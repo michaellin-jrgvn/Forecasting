@@ -303,7 +303,7 @@ forecast_spmh = regression_table.Gradient * sales_process_sim_df.bill_size.sum()
 st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = sales_process_sim_df.bill_size.sum() / forecast_spmh
 st.write('Maximum manhour allowance from regression is:', int(manhour_allowed))
-actual_spmh = df[df['Date'].dt.date == forecast_date]['Actual SPMH']
+actual_spmh = df[df['Date'].dt.date == forecast_date][['Actual SPMH','Total actual hours (included Holiday and paid leave days)']]
 st.write(actual_spmh)
         
 
@@ -707,8 +707,9 @@ optimal = scenario_kpi_df.iloc[0,:]
 optimal_details = scenario_df[scenario_df.scenario == optimal.scenario]
 
 st.subheader('Resources Usage')
-resample_selection = st.selectbox('View data in different frequency',['T','30T','H'])
+resample_selection = st.selectbox('View data in different frequency',['30T','T','H'])
 optimal_capacity = scenario_capacity_df[scenario_capacity_df.scenario == optimal.scenario].set_index('time').groupby('resource_name').resample(resample_selection).max()
+optimal_capacity[['occupied_quantities','tasks_in_queue']] = optimal_capacity[['occupied_quantities','tasks_in_queue']]
 optimal_capacity = optimal_capacity.reset_index(level=0,drop=True)
 st.write(optimal_capacity)
 capacity_plot = px.area(optimal_capacity,x=optimal_capacity.index,y='occupied_quantities',color='resource_name')
