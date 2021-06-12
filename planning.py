@@ -279,11 +279,10 @@ if forecast_date >= channels_split_df['Dinein - Sales'].index.max():
 else:
     # Use selected_store_df to preprocess ready for simulation_df
     sales_process_sim_df = selected_store_df.loc[forecast_date:forecast_date + datetime.timedelta(days=1)][['bill_size','channel']]
-    st.write(sales_process_sim_df)
+    st.write(sales_process_sim_df.groupby('channel').sum())
     hist_sim_plt= sales_process_sim_df.groupby('channel').resample('H').sum()
     hist_sim_plt = hist_sim_plt.reset_index('channel', drop=False)
     hist_sim_pivot = pd.pivot_table(hist_sim_plt,columns='channel',values='bill_size',index=hist_sim_plt.index).fillna(0)
-    st.write(hist_sim_pivot)
     historical_channel_sales_plt = px.area(hist_sim_plt,y='bill_size',color='channel')
     st.plotly_chart(historical_channel_sales_plt, use_container_width=True)
 
