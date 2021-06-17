@@ -418,8 +418,9 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         for i in range(0,total_opening_hours+1):
             resources = {'riders':riders,'cashiers':cashiers,'csr':csr,'manager':manager,'dispatcher':dispatchers,'makers':makers}
             for index, resource in enumerate(resources):
-                final_index = i * index + i * len(resources)
+                final_index = i + index + i * len(resources)
                 capacity_df.loc[final_index]= [scenario, env.now, resource, resources[resource].count, len(resources[resource].queue)]
+
             yield env.timeout(1)
             
 
