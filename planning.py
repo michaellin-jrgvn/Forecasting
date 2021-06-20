@@ -425,9 +425,9 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
 
             yield env.timeout(1)
     
-    def monitor_equipment(env, cashier_counter, make_table, dispatcher_counter, bike_capacity,scenario):
+    def monitor_equipment(env, cashier_counter, make_table, dispatch_counter, bike_capacity,scenario):
         for i in range(0,total_opening_hours+1):
-            resources = {'cashier_counter':cashier_counter, 'make_table':make_table, 'dispatcher_counter':dispatcher_counter, 'bike_capacity':bike_capacity}
+            resources = {'cashier_counter':cashier_counter, 'make_table':make_table, 'dispatcher_count':dispatch_counter, 'bike_capacity':bike_capacity}
             for index, resource in enumerate(resources):
                 final_index = i + index + i * len(resources)
                 equipment_capacity_df.loc[final_index]= [scenario, env.now, resource, resources[resource].count, len(resources[resource].queue)]
