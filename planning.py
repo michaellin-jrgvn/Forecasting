@@ -342,10 +342,12 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
     random.seed(42)
     time_df = pd.DataFrame(index=sales_process_sim_df.index, columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
     capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
+    equipment_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['csr','cashiers','dispatchers','makers','riders','manager'])
     scenario_kpi_df = pd.DataFrame(columns=['scenario','cashiers','csr','makers','dispatchers','riders','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
     scenario_df = pd.DataFrame(columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
     scenario_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
+    scenario_equipment_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     scenario_routine_df = {}
 
     # Define stations maximum capacity
@@ -420,6 +422,15 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
             for index, resource in enumerate(resources):
                 final_index = i + index + i * len(resources)
                 capacity_df.loc[final_index]= [scenario, env.now, resource, resources[resource].count, len(resources[resource].queue)]
+
+            yield env.timeout(1)
+    
+    def monitor_equipment(env, cashier_counter, make_table, dispatcher_counter, bike_capacity,scenario):
+        for i in range(0,total_opening_hours+1):
+            resources = {'cashier_counter':cashier_counter, 'make_table':make_table, 'dispatcher_counter':dispatcher_counter, 'bike_capacity':bike_capacity}
+            for index, resource in enumerate(resources):
+                final_index = i + index + i * len(resources)
+                equipment_capacity_df.loc[final_index]= [scenario, env.now, resource, resources[resource].count, len(resources[resource].queue)]
 
             yield env.timeout(1)
             
@@ -515,10 +526,10 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
 
         if channel == 'Delivery':
             with bike_capacity.request() as bike_request:
-                with riders.request(priority=priority,preempt=False) as request:
+                with riders.request(priority=priority,preempt=False) as rider_request:
                     drive_time = random.randint(4,10)
                     customer_waiting_time = random.randint(3,5)
-                    yield request & bike_request
+                    yield rider_request & bike_request
                     out_delivery_time = env.now
                     yield env.timeout(drive_time)
                     yield env.timeout(customer_waiting_time)
@@ -664,6 +675,7 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         env.process(generate_daily_routine(env,routine_df,ROUTINE_PRIORITY))
                         env.process(new_order(env, makers,i, total_order, df_sample,cashiers,csr,scenario,ORDER_PRIORITY))
                         env.process(monitor_resources(env, riders, cashiers, csr, manager, dispatchers,makers,scenario))
+                        env.process(monitor_equipment(env, cashier_counter, make_table, dispatch_table, bike_capacity,scenario))
                         print('processing...',j,k,l,m,n)
 
                         # Run simulation from defined timeframe
@@ -704,9 +716,12 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         print(start_datetime)
                         capacity_df['time'] = pd.to_timedelta(capacity_df['time'],unit='m')
                         capacity_df['time'] = start_datetime + capacity_df['time']
+                        equipment_capacity_df['time'] = pd.to_timedelta(equipment_capacity_df['time'],unit='m')
+                        equipment_capacity_df['time'] = start_datetime + equipment_capacity_df['time']
 
                         scenario_df = scenario_df.append(time_df)
                         scenario_capacity_df = scenario_capacity_df.append(capacity_df)
+                        scenario_equipment_capacity_df = scenario_equipment_capacity_df.append(equipment_capacity_df)
                         scenario_routine_df[scenario] = routine_time_df
                            
                         #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
@@ -714,12 +729,12 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
                         #    st.plotly_chart(time_df_plot)
                         # st.write(routine_time_df)
                         scenario +=1
-    return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df
+    return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df, scenario_equipment_capacity_df
 
-scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date,sales_process_sim_df)
+scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df, scenario_equipment_capacity_df = run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispatchers_capacity,riders_capacity,oven_capacity,csr_capacity,routine_df,forecast_date,sales_process_sim_df)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
-#option = st.selectbox('Select scneario:', range(len(scenario_df)))
+#option = st.selectbox('Select scenario:', range(len(scenario_df)))
 
 # Use minmax scaler to normalize all variable to determine the optimum capacity arrangement
 scaler = MinMaxScaler()
@@ -745,6 +760,13 @@ optimal_capacity = optimal_capacity.reset_index(level=0,drop=True)
 st.write(optimal_capacity)
 capacity_plot = px.area(optimal_capacity,x=optimal_capacity.index,y='occupied_quantities',color='resource_name')
 st.plotly_chart(capacity_plot)
+
+st.subheader('Equipment Usage')
+equipment_usage = scenario_equipment_capacity_df[scenario_equipment_capacity_df.scenario == optimal.scenario].set_index('time').groupby('resource_name').resample(resample_selection).max()
+equipment_usage[['occupied_quantities','tasks_in_queue']] = equipment_usage[['occupied_quantities','tasks_in_queue']]
+equipment_usage = equipment_usage.reset_index(level=0,drop=True)
+equipment_plot = px.area(equipment_usage,x=equipment_usage.index,y='occupied_quantities',color='resource_name')
+st.plotly_chart(equipment_plot)
 
 st.subheader('Tasks / Orders in queue')
 pending_tasks_plt = px.area(optimal_capacity,x=optimal_capacity.index,y='tasks_in_queue',color='resource_name')
