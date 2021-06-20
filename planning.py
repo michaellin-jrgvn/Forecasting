@@ -514,16 +514,17 @@ def run_ops_simulation(manager_capacity,makers_capacity,cashiers_capacity,dispat
         time_df.iloc[i]['dispatch_time'] = env.now-dispatch_start_time
 
         if channel == 'Delivery':
-            with riders.request(priority=priority,preempt=False) as request:
-                drive_time = random.randint(4,10)
-                customer_waiting_time = random.randint(3,5)
-                yield request
-                out_delivery_time = env.now
-                yield env.timeout(drive_time)
-                yield env.timeout(customer_waiting_time)
-                delivery_complete_time = env.now
-                # Driver return to store
-                yield env.timeout(drive_time)
+            with bike_capacity.request() as bike_request:
+                with riders.request(priority=priority,preempt=False) as request:
+                    drive_time = random.randint(4,10)
+                    customer_waiting_time = random.randint(3,5)
+                    yield request & bike_request
+                    out_delivery_time = env.now
+                    yield env.timeout(drive_time)
+                    yield env.timeout(customer_waiting_time)
+                    delivery_complete_time = env.now
+                    # Driver return to store
+                    yield env.timeout(drive_time)
             time_df.iloc[i]['scenario'] = scenario
             time_df.iloc[i]['order_await_delivery'] = out_delivery_time-dispatch_end_time
             time_df.iloc[i]['delivery_time'] = delivery_complete_time-out_delivery_time
