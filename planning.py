@@ -791,7 +791,7 @@ boh_roster, boh_schedule = optimize_labour(roster_df, 'boh')
 rider_roster, rider_schedule = optimize_labour(roster_df,'riders')
 foh_roster, foh_schedule = optimize_labour(roster_df,'foh')
 mgnt_roster, mgnt_schedule = optimize_labour(roster_df,'manager')
-merged_roster = pd.concat([boh_roster, rider_roster, foh_roster, rider_roster,mgnt_roster],axis=1)
+merged_roster = pd.concat([boh_roster, rider_roster, foh_roster,mgnt_roster],axis=1)
 st.write(merged_roster)
 
 # Generate roster schedule chart
