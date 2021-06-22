@@ -92,7 +92,7 @@ def resample_ta(resample, sales, tc):
 def loop_simulation(simulation_df):
     df_sim_full = {}
     df_sim_sum = pd.DataFrame()
-    loop = 1000
+    loop = 1
     for i in range(loop):
         df_sim_full[i] = simulation_df(df)
         agg_h=df_sim_full[i].resample('H').sum()
