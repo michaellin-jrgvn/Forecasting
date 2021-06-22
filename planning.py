@@ -92,7 +92,7 @@ def resample_ta(resample, sales, tc):
 def loop_simulation(simulation_df):
     df_sim_full = {}
     df_sim_sum = pd.DataFrame()
-    loop = 1000
+    loop = 1
     for i in range(loop):
         df_sim_full[i] = simulation_df(df)
         agg_h=df_sim_full[i].resample('H').sum()
@@ -298,6 +298,7 @@ st.plotly_chart(spmh_store_plt)
 
 regression_table = regression_table(spmh_store_plt, 'Store Name')
 st.write(regression_table)
+st.write(sales_process_sim_df.bill_size.sum())
 forecast_spmh = regression_table.Gradient * sales_process_sim_df.bill_size.sum() + regression_table['y-intercept']
 st.write('Minimum SPMH from regression is: ', int(forecast_spmh))
 manhour_allowed = sales_process_sim_df.bill_size.sum() / forecast_spmh
