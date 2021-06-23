@@ -122,3 +122,4 @@ wrapt==1.11.2
 xarray
 xlrd==1.2.0
 zipp 
+google-cloud-firestore

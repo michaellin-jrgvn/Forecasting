@@ -7,6 +7,8 @@ import base64
 from io import BytesIO
 import os
 
+from google.cloud import firestore
+
 from fbprophet import Prophet
 from fbprophet.plot import plot_plotly, plot_components_plotly
 from scipy.stats import boxcox, truncnorm
@@ -354,10 +356,10 @@ def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
     BIKE_CAPACITY = 6
 
     # Define cross-tained manpower capacity
-    BOH_MANPOWER_CAPACITY = MAKE_TABLE_CAPACITY + AUX_TABLE_CAPACITY + DISPATCH_TABLE_CAPACITY
-    FOH_MANPOWER_CAPACITY = CASHIER_COUNTER_CAPACITY + 6
-    RIDER_CAPACITY = BIKE_CAPACITY
-    MOD_CAPACITY = 2
+    BOH_MANPOWER_CAPACITY = 1 #MAKE_TABLE_CAPACITY + AUX_TABLE_CAPACITY + DISPATCH_TABLE_CAPACITY
+    FOH_MANPOWER_CAPACITY = 1 #CASHIER_COUNTER_CAPACITY + 6
+    RIDER_CAPACITY = 1 #BIKE_CAPACITY
+    MOD_CAPACITY = 1 #2
 
     # Task priority setting
     ORDER_PRIORITY = -1
@@ -802,8 +804,25 @@ merged_schedule.reset_index(drop=True, inplace=True)
 schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
 st.plotly_chart(schedule_plt)
 hours_per_shift = 4
-final_MH = merged_roster.sum() * hours_per_shift
+model_MH = merged_roster.sum() * hours_per_shift
+final_MH = model_MH.sum() + 8
+projected_sales = sales_process_sim_df['bill_size'].sum()
+final_SPMH = round(projected_sales/final_MH,0)
+
 
 # Conclude the final SPMH and MH from optimal schedule
-st.write('Final SPMH based on roster: ',round(sales_process_sim_df['bill_size'].sum()/(final_MH.sum()+8),0))
-st.write('Total hours arranged: ', final_MH.sum()+8)
+st.write('Final SPMH based on roster: ', final_SPMH)
+st.write('Total hours arranged: ', final_MH)
+
+# Setting firestore to store all the data
+# Authenticate to Firestore with the JSON account key.
+db = firestore.Client.from_service_account_json('col-optimization-firebase-adminsdk-vfyb2-f8efd6ca96.json')
+
+file_name = f'{forecast_date}_{projected_sales}'
+res = db.collection('COL_data').document(file_name).set({
+    'cross-trained': True,
+    'model_SPMH': final_SPMH.astype(int).item(),
+    'model_MH': final_MH.astype(int).item(),
+    'reg_SPMH': forecast_spmh.astype(int).item(),
+    'reg_MH': manhour_allowed.astype(int).item()
+})
