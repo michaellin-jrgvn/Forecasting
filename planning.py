@@ -679,7 +679,7 @@ def run_ops_simulation(routine_df, forecast_date, sales_process_sim_df, MAKE_TAB
     print('Total order: ', total_order)
 
     # simulate the operation process by iterating all resources capacities 
-    for j in range(1, 2):  # BOH_MANPOWER_CAPACITY+1
+    for j in range(1, 3):  # BOH_MANPOWER_CAPACITY+1
         for k in range(1, 2 ): #FOH_MANPOWER_CAPACITY+1
             for l in range(1, 2):  # RIDER_CAPACITY+1
                 for m in range(1, 2):  # MOD_CAPACITY+1
@@ -842,11 +842,13 @@ roster_df = roster_df.append(last_hour)
 #st.write(roster_df.sum())
 
 # Run Linear Programming on each station
+hours_per_shift = 4
+
 # Define cross-tained manpower capacity
-boh_roster, boh_schedule = optimize_labour(roster_df, 'boh', BOH_MANPOWER_CAPACITY)
-rider_roster, rider_schedule = optimize_labour(roster_df,'riders',BIKE_CAPACITY)
-foh_roster, foh_schedule = optimize_labour(roster_df, 'foh', FOH_MANPOWER_CAPACITY)
-mgnt_roster, mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY)
+boh_roster, boh_schedule = optimize_labour(roster_df, 'boh', BOH_MANPOWER_CAPACITY,hours_per_shift)
+rider_roster, rider_schedule = optimize_labour(roster_df,'riders',BIKE_CAPACITY,hours_per_shift)
+foh_roster, foh_schedule = optimize_labour(roster_df, 'foh', FOH_MANPOWER_CAPACITY,hours_per_shift)
+mgnt_roster, mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY,hours_per_shift)
 merged_roster = pd.concat([boh_roster, rider_roster, foh_roster,mgnt_roster],axis=1)
 #st.write(merged_roster)
 
@@ -856,7 +858,7 @@ merged_schedule.reset_index(drop=True, inplace=True)
 st.write(merged_schedule)
 schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
 st.plotly_chart(schedule_plt)
-hours_per_shift = 4
+
 model_MH = merged_roster.sum() * hours_per_shift
 final_MH = model_MH.sum() + 8
 projected_sales = sales_process_sim_df['bill_size'].sum()
