@@ -353,7 +353,7 @@ BIKE_CAPACITY = 6
 BOH_MANPOWER_CAPACITY = MAKE_TABLE_CAPACITY + AUX_TABLE_CAPACITY + DISPATCH_TABLE_CAPACITY
 FOH_MANPOWER_CAPACITY = CASHIER_COUNTER_CAPACITY + 6
 RIDER_CAPACITY = BIKE_CAPACITY
-MOD_CAPACITY = 2
+MOD_CAPACITY = 1
 
 # Define simulation timeframe
 store_opening_time = 8
@@ -679,10 +679,10 @@ def run_ops_simulation(routine_df, forecast_date, sales_process_sim_df, MAKE_TAB
     print('Total order: ', total_order)
 
     # simulate the operation process by iterating all resources capacities 
-    for j in range(1, 3):  # BOH_MANPOWER_CAPACITY+1
-        for k in range(1, 2 ): #FOH_MANPOWER_CAPACITY+1
-            for l in range(1, 2):  # RIDER_CAPACITY+1
-                for m in range(1, 2):  # MOD_CAPACITY+1
+    for j in range(1, BOH_MANPOWER_CAPACITY+1):  # BOH_MANPOWER_CAPACITY+1
+        for k in range(1, FOH_MANPOWER_CAPACITY+1):  # FOH_MANPOWER_CAPACITY+1
+            for l in range(1, RIDER_CAPACITY+1):  # RIDER_CAPACITY+1
+                for m in range(1, MOD_CAPACITY+1):  # MOD_CAPACITY+1
                         # Create simulation enviornment and define resources capacities
                         env = simpy.Environment()
                         i=0
@@ -834,9 +834,9 @@ st.plotly_chart(time_df_plot)
 # Restructure capacity_df for optimization
 roster_df = optimal_capacity.pivot_table(index='time',columns='resource_name',values='occupied_quantities',aggfunc='max')
 # Add the last 30 minutes to complete the schedule
-last_hour = roster_df.last('3T')
-last_hour.index = last_hour.index + datetime.timedelta(minutes=30)
-roster_df = roster_df.append(last_hour)
+#last_hour = roster_df.last('3T')
+#last_hour.index = last_hour.index + datetime.timedelta(minutes=30)
+#roster_df = roster_df.append(last_hour)
 
 #st.write('roster_df:',roster_df)
 #st.write(roster_df.sum())
