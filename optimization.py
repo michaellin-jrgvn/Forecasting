@@ -2,7 +2,7 @@ import pulp as pl
 import pandas as pd
 from datetime import datetime, timedelta
 
-def optimize_labour(ds, resource):
+def optimize_labour(ds, resource, capacity):
     # Initiate class
     model = pl.LpProblem("Roster Arrangement",pl.LpMinimize)
     time_slot = list(range(len(ds.index)))
@@ -30,8 +30,8 @@ def optimize_labour(ds, resource):
     model += x[6] + x[7] + x[8] + x[9] + x[10] + x[11] + x[12] + x[13] == ds.iloc[13,:][resource]
     model += x[7] + x[8] + x[9] + x[10] + x[11] + x[12] + x[13] + x[14] == ds.iloc[14,:][resource]
     model += x[8] + x[9] + x[10] + x[11] + x[12] + x[13] + x[14] + x[15] == ds.iloc[15,:][resource]
-    model += x[9] + x[10] + x[11] + x[12] + x[13] + x[14] + x[15] + x[16] == ds.iloc[16,:][resource]
-    model += x[10] + x[11] + x[12] + x[13] + x[14] + x[15] + x[16] + x[17] == ds.iloc[17,:][resource]
+    model += x[9] + x[10] + x[11] + x[12] + x[13] + x[14] + x[15] + x[16] >= ds.iloc[16,:][resource]
+    model += x[10] + x[11] + x[12] + x[13] + x[14] + x[15] + x[16] + x[17] >= ds.iloc[17,:][resource]
     model += x[11] + x[12] + x[13] + x[14] + x[15] + x[16] + x[17] + x[18] >= ds.iloc[18,:][resource]
     model += x[12] + x[13] + x[14] + x[15] + x[16] + x[17] + x[18] + x[19] >= ds.iloc[19,:][resource]
     model += x[13] + x[14] + x[15] + x[16] + x[17] + x[18] + x[19] + x[20] >= ds.iloc[20,:][resource]
@@ -43,8 +43,13 @@ def optimize_labour(ds, resource):
     model += x[19] + x[20] + x[21] + x[22] + x[23] + x[24] + x[25] + x[26] >= ds.iloc[26,:][resource]
     model += x[20] + x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] >= ds.iloc[27,:][resource]
     model += x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] >= ds.iloc[28,:][resource]
-    model += x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] == 0
-    #model += x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] == 0
+    model += x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] >= ds.iloc[29,:][resource]
+    model += x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] == 0
+
+    # Constraints to ensure the resources allocated does not exceed the station capacities
+    for i in time_slot:
+        model += x[i] <= capacity
+        model += x[i] >= 0
 
     # Solve Model
     model.solve()
