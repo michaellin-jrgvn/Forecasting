@@ -1,6 +1,7 @@
 import pulp as pl
 import pandas as pd
 from datetime import timedelta
+import itertools
 
 def optimize_labour(ds, resource, capacity, hours_per_shift):
     # Initiate class
@@ -37,35 +38,11 @@ def optimize_labour(ds, resource, capacity, hours_per_shift):
                 model += constraint == ds.iloc[index,:][resource]
             # print(constraint) 
                 
-    # model += x[1] + x[2] + x[3] + x[4] + x[5] + x[6] + x[7] + x[8] >= ds.iloc[8,:][resource]
-    # model += x[2] + x[3] + x[4] + x[5] + x[6] + x[7] + x[8] + x[9] >= ds.iloc[9,:][resource]
-    # model += x[3] + x[4] + x[5] + x[6] + x[7] + x[8] + x[9] + x[10] >= ds.iloc[10,:][resource]
-    # model += x[4] + x[5] + x[6] + x[7] + x[8] + x[9] + x[10] + x[11] >= ds.iloc[11,:][resource]
-    # model += x[5] + x[6] + x[7] + x[8] + x[9] + x[10] + x[11] + x[12] == ds.iloc[12,:][resource]
-    # model += x[6] + x[7] + x[8] + x[9] + x[10] + x[11] + x[12] + x[13] == ds.iloc[13,:][resource]
-    # model += x[7] + x[8] + x[9] + x[10] + x[11] + x[12] + x[13] + x[14] == ds.iloc[14,:][resource]
-    # model += x[8] + x[9] + x[10] + x[11] + x[12] + x[13] + x[14] + x[15] == ds.iloc[15,:][resource]
-    # model += x[9] + x[10] + x[11] + x[12] + x[13] + x[14] + x[15] + x[16] >= ds.iloc[16,:][resource]
-    # model += x[10] + x[11] + x[12] + x[13] + x[14] + x[15] + x[16] + x[17] >= ds.iloc[17,:][resource]
-    # model += x[11] + x[12] + x[13] + x[14] + x[15] + x[16] + x[17] + x[18] >= ds.iloc[18,:][resource]
-    # model += x[12] + x[13] + x[14] + x[15] + x[16] + x[17] + x[18] + x[19] >= ds.iloc[19,:][resource]
-    # model += x[13] + x[14] + x[15] + x[16] + x[17] + x[18] + x[19] + x[20] >= ds.iloc[20,:][resource]
-    # model += x[14] + x[15] + x[16] + x[17] + x[18] + x[19] + x[20] + x[21] >= ds.iloc[21,:][resource]
-    # model += x[15] + x[16] + x[17] + x[18] + x[19] + x[20] + x[21] + x[22] >= ds.iloc[22,:][resource]
-    # model += x[16] + x[17] + x[18] + x[19] + x[20] + x[21] + x[22] + x[23] >= ds.iloc[23,:][resource]
-    # model += x[17] + x[18] + x[19] + x[20] + x[21] + x[22] + x[23] + x[24] >= ds.iloc[24,:][resource]
-    # model += x[18] + x[19] + x[20] + x[21] + x[22] + x[23] + x[24] + x[25] >= ds.iloc[25,:][resource]
-    # model += x[19] + x[20] + x[21] + x[22] + x[23] + x[24] + x[25] + x[26] >= ds.iloc[26,:][resource]
-    # model += x[20] + x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] >= ds.iloc[27,:][resource]
-    # model += x[21] + x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] >= ds.iloc[28,:][resource]
-    # model += x[22] + x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] >= ds.iloc[29,:][resource]
-    # model += x[23] + x[24] + x[25] + x[26] + x[27] + x[28] + x[29] + x[30] == 0
-
     # Constraints to ensure the resources allocated does not exceed the station capacities
     for i in time_slot:
         model += x[i] <= capacity
         model += x[i] >= 0
-    print(model)
+    # print(model)
     # Solve Model
     model.solve()
 
@@ -91,7 +68,13 @@ def optimize_labour(ds, resource, capacity, hours_per_shift):
     roster_df['end_time'] = roster_df.start_time + timedelta(hours=hours_per_shift)
     roster_df['resource'] = resource
 
-    # 2nd round optimization to minmize overlapping hours and introduce flexible shift hours from 4-8 hours
+    # Combine consecutive 4 hours shift together
+    for x, y in itertools.product(range(len(roster_df) - 1), repeat=2):
+        if x != y:
+            if roster_df.iloc[x]['end_time'] == roster_df.iloc[y]['start_time']:
+                roster_df['end_time'].iloc[x] = roster_df['end_time'].iloc[y]
+                roster_df['end_time'].iloc[y] = 0
+    roster_df = roster_df[roster_df.end_time != 0]
 
 
     return df, roster_df
