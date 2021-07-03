@@ -848,7 +848,7 @@ hours_per_shift = 4
 boh_roster, boh_schedule = optimize_labour(roster_df, 'boh', BOH_MANPOWER_CAPACITY,hours_per_shift)
 rider_roster, rider_schedule = optimize_labour(roster_df,'riders',BIKE_CAPACITY,hours_per_shift)
 foh_roster, foh_schedule = optimize_labour(roster_df, 'foh', FOH_MANPOWER_CAPACITY,hours_per_shift)
-mgnt_roster, mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY,hours_per_shift)
+mgnt_roster, mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY,8)
 merged_roster = pd.concat([boh_roster, rider_roster, foh_roster,mgnt_roster],axis=1)
 #st.write(merged_roster)
 

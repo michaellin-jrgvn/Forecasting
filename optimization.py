@@ -1,5 +1,6 @@
 import pulp as pl
 import pandas as pd
+import numpy as np
 from datetime import timedelta
 import itertools
 
@@ -67,14 +68,21 @@ def optimize_labour(ds, resource, capacity, hours_per_shift):
     roster_df['start_time'] = roster_start_time
     roster_df['end_time'] = roster_df.start_time + timedelta(hours=hours_per_shift)
     roster_df['resource'] = resource
+    roster_df['status'] = 'normal'
 
     # Combine consecutive 4 hours shift together
-    for x, y in itertools.product(range(len(roster_df) - 1), repeat=2):
-        if x != y:
-            if roster_df.iloc[x]['end_time'] == roster_df.iloc[y]['start_time']:
-                roster_df['end_time'].iloc[x] = roster_df['end_time'].iloc[y]
-                roster_df['end_time'].iloc[y] = 0
-    roster_df = roster_df[roster_df.end_time != 0]
+    for x, y in itertools.product(range(len(roster_df)), repeat=2):
+        if x != y and roster_df['status'].iloc[x] == 'normal' and roster_df['status'].iloc[y] == 'normal':
+            if roster_df.iloc[x]['end_time'] - roster_df.iloc[x]['start_time'] == timedelta(hours=4):
+                if roster_df.iloc[x]['end_time'] == roster_df.iloc[y]['start_time']:
+                    roster_df['end_time'].iloc[x] = roster_df['end_time'].iloc[y]
+                    roster_df['status'].iloc[y] = 'duplicated'
+                    roster_df['status'].iloc[x] = 'combined'
+                elif roster_df.iloc[x]['start_time'] == roster_df.iloc[y]['end_time']:
+                    roster_df['start_time'].iloc[x] = roster_df['start_time'].iloc[y]
+                    roster_df['status'].iloc[y] = 'duplicated'
+                    roster_df['status'].iloc[x] = 'combined'
+    roster_df = roster_df[roster_df.status != 'duplicated']
 
 
     return df, roster_df
