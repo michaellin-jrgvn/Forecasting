@@ -7,6 +7,8 @@ import base64
 from io import BytesIO
 import os
 
+from google.cloud import firestore
+
 from fbprophet import Prophet
 from fbprophet.plot import plot_plotly, plot_components_plotly
 from scipy.stats import boxcox, truncnorm
@@ -286,6 +288,29 @@ else:
     historical_channel_sales_plt = px.area(hist_sim_plt,y='bill_size',color='channel')
     st.plotly_chart(historical_channel_sales_plt, use_container_width=True)
 
+# Sales forecast summary
+total_transaction  = sales_process_sim_df['bill_size'].count().item()
+total_sales = sales_process_sim_df['bill_size'].sum().item()
+st.write('Total transaction: ', total_transaction)
+st.write('Total sales', total_sales)
+pickup_transaction_percent = round((sales_process_sim_df[sales_process_sim_df['channel'] == 'Pickup']['bill_size'].count()/total_transaction).item(),3)
+dinein_transaction_percent = round((sales_process_sim_df[sales_process_sim_df['channel'] == 'Dinein']['bill_size'].count()/total_transaction).item(),3)
+delivery_transaction_percent = round((sales_process_sim_df[sales_process_sim_df['channel'] == 'Delivery']['bill_size'].count()/total_transaction).item(),3)
+st.write('Pickup Transaction percentage:', pickup_transaction_percent)
+st.write('Dinein Transaction percentage:', dinein_transaction_percent)
+st.write('Delivery Transaction percentage:', delivery_transaction_percent)
+
+pickup_sales_percent = round((
+    sales_process_sim_df[sales_process_sim_df['channel'] == 'Pickup']['bill_size'].sum()/total_sales).item(),3)
+dinein_sales_percent = round((
+    sales_process_sim_df[sales_process_sim_df['channel'] == 'Dinein']['bill_size'].sum()/total_sales).item(),3)
+delivery_sales_percent = round((
+    sales_process_sim_df[sales_process_sim_df['channel'] == 'Delivery']['bill_size'].sum()/total_sales).item(),3)
+st.write('Pickup Sales percentage:', pickup_sales_percent)
+st.write('Dinein Sales percentage:', dinein_sales_percent)
+st.write('Delivery Sales percentage:', delivery_sales_percent)
+
+
 # Obtain COL data from COL_functions
 
 col, trans = read_col_files()
@@ -316,6 +341,19 @@ dispatchers_capacity = 2
 csr_capacity = 2
 manager_capacity = 1
 
+# Define stations maximum capacity
+MAKE_TABLE_CAPACITY = 2
+AUX_TABLE_CAPACITY = 1
+OVEN_CAPACITY = 4
+DISPATCH_TABLE_CAPACITY = 2
+CASHIER_COUNTER_CAPACITY = 2
+BIKE_CAPACITY = 6
+
+# Define cross-tained manpower capacity
+BOH_MANPOWER_CAPACITY = MAKE_TABLE_CAPACITY + AUX_TABLE_CAPACITY + DISPATCH_TABLE_CAPACITY
+FOH_MANPOWER_CAPACITY = CASHIER_COUNTER_CAPACITY + 6
+RIDER_CAPACITY = BIKE_CAPACITY
+MOD_CAPACITY = 1
 
 # Define simulation timeframe
 store_opening_time = 8
@@ -331,7 +369,7 @@ routine_df = get_routine_tasks()
 
 # Iterate through the capacities of resources
 @st.cache()
-def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
+def run_ops_simulation(routine_df, forecast_date, sales_process_sim_df, MAKE_TABLE_CAPACITY, AUX_TABLE_CAPACITY, DISPATCH_TABLE_CAPACITY, CASHIER_COUNTER_CAPACITY, BIKE_CAPACITY, MOD_CAPACITY):
     # setting up empty dataframes for record
     scenario = 0
     random.seed(42)
@@ -339,25 +377,17 @@ def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
     capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     equipment_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     routine_time_df = pd.DataFrame(index=routine_df.start_time, columns=['foh','boh','riders','manager'])
-    scenario_kpi_df = pd.DataFrame(columns=['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
+    scenario_kpi_df = pd.DataFrame(columns=['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max','u17 hitrate','u17 max'])
     scenario_df = pd.DataFrame(columns=['scenario','cashier_time','make_time','oven_time','dispatch_time','foh_dinein_dispatch_time','foh_pickup_dispatch_time','foh_table_cleaning_time','order_await_delivery','delivery_time','delivery_return_time'])
     scenario_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     scenario_equipment_capacity_df = pd.DataFrame(columns=['scenario','time','resource_name','occupied_quantities','tasks_in_queue'])
     scenario_routine_df = {}
 
-    # Define stations maximum capacity
-    MAKE_TABLE_CAPACITY = 2
-    AUX_TABLE_CAPACITY = 1
-    OVEN_CAPACITY = 4
-    DISPATCH_TABLE_CAPACITY = 2
-    CASHIER_COUNTER_CAPACITY = 2
-    BIKE_CAPACITY = 6
-
     # Define cross-tained manpower capacity
     BOH_MANPOWER_CAPACITY = MAKE_TABLE_CAPACITY + AUX_TABLE_CAPACITY + DISPATCH_TABLE_CAPACITY
     FOH_MANPOWER_CAPACITY = CASHIER_COUNTER_CAPACITY + 6
     RIDER_CAPACITY = BIKE_CAPACITY
-    MOD_CAPACITY = 2
+    MOD_CAPACITY = MOD_CAPACITY
 
     # Task priority setting
     ORDER_PRIORITY = -1
@@ -649,10 +679,10 @@ def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
     print('Total order: ', total_order)
 
     # simulate the operation process by iterating all resources capacities 
-    for j in range(1, BOH_MANPOWER_CAPACITY+1):
-        for k in range(1, FOH_MANPOWER_CAPACITY+1):
-            for l in range(1, RIDER_CAPACITY+1):
-                for m in range(1, MOD_CAPACITY+1):
+    for j in range(1, BOH_MANPOWER_CAPACITY+1):  # BOH_MANPOWER_CAPACITY+1
+        for k in range(1, FOH_MANPOWER_CAPACITY+1):  # FOH_MANPOWER_CAPACITY+1
+            for l in range(1, RIDER_CAPACITY+1):  # RIDER_CAPACITY+1
+                for m in range(1, MOD_CAPACITY+1):  # MOD_CAPACITY+1
                         # Create simulation enviornment and define resources capacities
                         env = simpy.Environment()
                         i=0
@@ -693,6 +723,13 @@ def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
                         u14_hitrate = round(1-(fail_u14/total_order),2)
                         u14_max = u14_df['total_time'].max()
 
+                        # Determine u17 hitrate
+                        u17_df = time_df.copy()
+                        u17_df['total_time'] = u17_df[['cashier_time','make_time','oven_time','dispatch_time']].sum(axis=1)
+                        fail_u17 = u17_df[u17_df['total_time']> 17]['total_time'].count()
+                        u17_hitrate = round(1-(fail_u17/total_order),2)
+                        u17_max = u17_df['total_time'].max()
+
                         # Determine u30 hitrate
                         deli_df = time_df[time_df['delivery_time']>0].drop('scenario',axis=1)
                         total_deli_order = len(deli_df)
@@ -703,13 +740,19 @@ def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
                         u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
 
                         # Insert data to dataframe
-                        scenario_data = pd.DataFrame([[scenario,j,k,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max]],columns=['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max'])
+                        scenario_data = pd.DataFrame(
+                            [[scenario,j,k,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max,u17_hitrate,u17_max]],
+                            columns=['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max','u17 hitrate','u17 max']
+                        )
+
                         scenario_kpi_df = scenario_kpi_df.append(scenario_data)
                         u14_hitrate_target = 0.9
                         u30_hitrate_target = 0.9
+                        u17_hitrate_target = 0.9
                         scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - u30_hitrate_target)
                         scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - u14_hitrate_target)
-                        scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','SPMH'], ascending=(True,True,True,True,False))
+                        scenario_kpi_df['u17 absolute var'] = np.abs(scenario_kpi_df['u17 hitrate'] - u17_hitrate_target)
+                        scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','u17 max','u17 absolute var','SPMH'], ascending=(True,True,True,True,True,True,False))
 
                         # Add date & time to the time column of capacity_df dataframe
                         start_datetime = datetime.datetime.combine(forecast_date, datetime.time(8,00))
@@ -731,22 +774,27 @@ def run_ops_simulation(routine_df,forecast_date,sales_process_sim_df):
                         scenario +=1
     return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df, scenario_equipment_capacity_df
 
-scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df, scenario_equipment_capacity_df = run_ops_simulation(routine_df,forecast_date,sales_process_sim_df)
+
+scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df, scenario_equipment_capacity_df = run_ops_simulation(
+    routine_df, forecast_date, sales_process_sim_df, MAKE_TABLE_CAPACITY, AUX_TABLE_CAPACITY, DISPATCH_TABLE_CAPACITY, CASHIER_COUNTER_CAPACITY, BIKE_CAPACITY, MOD_CAPACITY)
 scenario_kpi_df = scenario_kpi_df.reset_index(drop=True)
 
 #option = st.selectbox('Select scenario:', range(len(scenario_df)))
 
 # Use minmax scaler to normalize all variable to determine the optimum capacity arrangement
 scaler = MinMaxScaler()
-scenario_kpi_df[['u30 hitrate trans','u30 max trans','u14 hitrate trans','u14 max trans','SPMH trans','u30 abs var trans','u14 abs var trans']] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate','u30 max','u14 hitrate','u14 max','SPMH', 'u30 absolute var','u14 absolute var']])
-scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] -scenario_kpi_df['u14 max trans'] + scenario_kpi_df['SPMH trans']*1.2
+scenario_kpi_df[['u30 hitrate trans', 'u30 max trans', 'u14 hitrate trans', 'u14 max trans', 'SPMH trans', 'u30 abs var trans', 'u14 abs var trans', 'u17 hitrate trans', 'u17 max trans', 'u17 abs var trans']
+                ] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate', 'u30 max', 'u14 hitrate', 'u14 max', 'SPMH', 'u30 absolute var', 'u14 absolute var', 'u17 hitrate', 'u17 max', 'u17 absolute var']])
+scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] - \
+    scenario_kpi_df['u14 max trans'] - scenario_kpi_df['u17 abs var trans'] - \
+    scenario_kpi_df['u17 max trans'] + scenario_kpi_df['SPMH trans']*1.2
 scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
 scenario_kpi_df['classification'] = 'suboptimals'
 scenario_kpi_df.iloc[:3]['classification'] = 'optimums'
 #st.write(scenario_kpi_df)
 
 st.subheader('Recommended Capacity Arrangements:')
-st.write(scenario_kpi_df[['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max']].head(20))
+st.write(scenario_kpi_df[['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u17 hitrate','u17 max','u30 hitrate','u30 max']].head(3))
 
 # set optimal arrnagement the first line of the dataframe
 optimal = scenario_kpi_df.iloc[0,:]
@@ -785,25 +833,69 @@ st.plotly_chart(time_df_plot)
 
 # Restructure capacity_df for optimization
 roster_df = optimal_capacity.pivot_table(index='time',columns='resource_name',values='occupied_quantities',aggfunc='max')
-st.write('roster_df:',roster_df)
+# Add the last 30 minutes to complete the schedule
+#last_hour = roster_df.last('3T')
+#last_hour.index = last_hour.index + datetime.timedelta(minutes=30)
+#roster_df = roster_df.append(last_hour)
+
+#st.write('roster_df:',roster_df)
+#st.write(roster_df.sum())
 
 # Run Linear Programming on each station
-boh_roster, boh_schedule = optimize_labour(roster_df, 'boh')
-rider_roster, rider_schedule = optimize_labour(roster_df,'riders')
-foh_roster, foh_schedule = optimize_labour(roster_df,'foh')
-mgnt_roster, mgnt_schedule = optimize_labour(roster_df,'manager')
-merged_roster = pd.concat([boh_roster, rider_roster, foh_roster,mgnt_roster],axis=1)
-st.write(merged_roster)
+hours_per_shift = 4
+
+# Define cross-tained manpower capacity
+boh_schedule = optimize_labour(roster_df, 'boh', BOH_MANPOWER_CAPACITY,hours_per_shift)
+rider_schedule = optimize_labour(roster_df,'riders',BIKE_CAPACITY,hours_per_shift)
+foh_schedule = optimize_labour(roster_df, 'foh', FOH_MANPOWER_CAPACITY,hours_per_shift)
+mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY,8)
+
+#st.write(merged_roster)
 
 # Generate roster schedule chart
 merged_schedule = pd.concat([boh_schedule,rider_schedule,foh_schedule,mgnt_schedule])
 merged_schedule.reset_index(drop=True, inplace=True)
-#st.write(merged_schedule)
+st.write(merged_schedule)
 schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
 st.plotly_chart(schedule_plt)
-hours_per_shift = 4
-final_MH = merged_roster.sum() * hours_per_shift
+
+model_MH = merged_schedule['hours'].sum()
+final_MH = model_MH.sum() + 8
+projected_sales = sales_process_sim_df['bill_size'].sum()
+final_SPMH = round(projected_sales/final_MH,0)
+
 
 # Conclude the final SPMH and MH from optimal schedule
-st.write('Final SPMH based on roster: ',round(sales_process_sim_df['bill_size'].sum()/(final_MH.sum()+8),0))
-st.write('Total hours arranged: ', final_MH.sum()+8)
+st.write('Final SPMH based on roster: ', final_SPMH)
+st.write('Total hours arranged: ', final_MH)
+
+# Setting firestore to store all the data
+# Authenticate to Firestore with the JSON account key.
+db = firestore.Client.from_service_account_json('col-optimization-firebase-adminsdk-vfyb2-f8efd6ca96.json')
+
+# Store simulation KPI to firestore
+file_name = f'{forecast_date}_{projected_sales}'
+res = db.collection('COL_data').document(file_name).set({
+    'projected_sales': projected_sales.astype(int).item(),
+    'projected_transaction': total_transaction,
+    'forecast_date': datetime.datetime.combine(forecast_date, datetime.datetime.min.time()),
+    'store_code': selected_store,
+    'cross-trained': True,
+    'model_SPMH': final_SPMH.astype(int).item(),
+    'model_MH': final_MH.astype(int).item(),
+    'reg_SPMH': forecast_spmh.astype(int).item(),
+    'reg_MH': manhour_allowed.astype(int).item(),
+    'pickup_trans_percent': pickup_transaction_percent,
+    'dinein_trans_percent': dinein_transaction_percent,
+    'deli_trans_percent': delivery_transaction_percent,
+    'boh_hours': roster_df['boh'].sum().item(),
+    'foh_hours': roster_df['foh'].sum().item(),
+    'riders_hours': roster_df['riders'].sum().item(),
+    'mic_hours': roster_df['manager'].sum().item(),
+    'u14_hitrate': optimal['u14 hitrate'].item(),
+    'u30_hitrate': optimal['u30 hitrate'].item(),
+    'u14_max': optimal['u14 max'].item(),
+    'u30_max': optimal['u30 max'].item(),
+    'u17_hitrate': optimal['u17 hitrate'].item(),
+    'u17_max': optimal['u17 max'].item(),
+})
