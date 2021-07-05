@@ -845,11 +845,11 @@ roster_df = optimal_capacity.pivot_table(index='time',columns='resource_name',va
 hours_per_shift = 4
 
 # Define cross-tained manpower capacity
-boh_roster, boh_schedule = optimize_labour(roster_df, 'boh', BOH_MANPOWER_CAPACITY,hours_per_shift)
-rider_roster, rider_schedule = optimize_labour(roster_df,'riders',BIKE_CAPACITY,hours_per_shift)
-foh_roster, foh_schedule = optimize_labour(roster_df, 'foh', FOH_MANPOWER_CAPACITY,hours_per_shift)
-mgnt_roster, mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY,8)
-merged_roster = pd.concat([boh_roster, rider_roster, foh_roster,mgnt_roster],axis=1)
+boh_schedule = optimize_labour(roster_df, 'boh', BOH_MANPOWER_CAPACITY,hours_per_shift)
+rider_schedule = optimize_labour(roster_df,'riders',BIKE_CAPACITY,hours_per_shift)
+foh_schedule = optimize_labour(roster_df, 'foh', FOH_MANPOWER_CAPACITY,hours_per_shift)
+mgnt_schedule = optimize_labour(roster_df, 'manager', MOD_CAPACITY,8)
+
 #st.write(merged_roster)
 
 # Generate roster schedule chart
@@ -859,7 +859,7 @@ st.write(merged_schedule)
 schedule_plt = px.timeline(merged_schedule,x_start='start_time',x_end='end_time',y=merged_schedule.index, color='resource')
 st.plotly_chart(schedule_plt)
 
-model_MH = merged_roster.sum() * hours_per_shift
+model_MH = merged_schedule['hours'].sum()
 final_MH = model_MH.sum() + 8
 projected_sales = sales_process_sim_df['bill_size'].sum()
 final_SPMH = round(projected_sales/final_MH,0)
