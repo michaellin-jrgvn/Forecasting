@@ -18,6 +18,7 @@ def optimize_labour(ds, resource, capacity, hours_per_shift):
 
     # Define Constraints
     # outer loop to handle number of rows
+
     constraint = None
     for index, slot in enumerate(time_slot):
         if index < total_shift_interval:
@@ -47,7 +48,52 @@ def optimize_labour(ds, resource, capacity, hours_per_shift):
     # Solve Model
     model.solve()
 
-    print('Status',pl.LpStatus[model.status])
+
+    if pl.LpStatus[model.status] == 'Infeasible':
+        # Initiate class
+        model = pl.LpProblem("Roster Arrangement", pl.LpMinimize)
+        time_slot = list(range(len(ds.index)))
+        total_shift_interval = hours_per_shift * 2
+
+        # Define Decision variables
+        x = pl.LpVariable.dicts('', time_slot, lowBound=0, cat='Integer')
+
+        # Define Objective function
+        model += pl.lpSum(x[i] for i in time_slot)
+
+        # Define Constraints
+        # outer loop to handle number of rows
+
+        constraint = None
+        for index, slot in enumerate(time_slot):
+            if index < total_shift_interval:
+                # incrementing number at each column
+                constraint = constraint + x[index]
+                model += constraint >= ds.iloc[index, :][resource]
+                # print(constraint)
+            else:
+                constraint = None
+                i = index - total_shift_interval
+                for j in range(1+i, total_shift_interval+i+1):
+                    constraint = constraint + x[j]
+                if index < len(time_slot)-1:
+                    if index >= 12 and index <= 15:
+                        model += constraint >= ds.iloc[index, :][resource]
+                    else:
+                        model += constraint >= ds.iloc[index, :][resource]
+                else:
+                    model += constraint == ds.iloc[index, :][resource]
+                # print(constraint)
+
+        # Constraints to ensure the resources allocated does not exceed the station capacities
+        for i in time_slot:
+            model += x[i] <= capacity
+            model += x[i] >= 0
+        # print(model)
+        # Solve Model
+        model.solve()
+
+    print('Status', pl.LpStatus[model.status])
 
     # Create resources dataframe
     df = pd.DataFrame([v.name,v.varValue] for v in model.variables())
