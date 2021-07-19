@@ -26,7 +26,7 @@ from optimization import optimize_labour
 from sklearn.preprocessing import MinMaxScaler
 
 import random
-
+import itertools
 import simpy
 
 np.random.seed(42)
@@ -686,100 +686,97 @@ for forecast_date in range(d1,d2):
         print('Starting Simulation')
         print('Total order: ', total_order)
 
-        # simulate the operation process by iterating all resources capacities 
-        for j in range(1, BOH_MANPOWER_CAPACITY+1):  # BOH_MANPOWER_CAPACITY+1
-            for k in range(1, FOH_MANPOWER_CAPACITY+1):  # FOH_MANPOWER_CAPACITY+1
-                for l in range(1, RIDER_CAPACITY+1):  # RIDER_CAPACITY+1
-                    for m in range(1, MOD_CAPACITY+1):  # MOD_CAPACITY+1
-                            # Create simulation enviornment and define resources capacities
-                            env = simpy.Environment()
-                            i=0
-                            # Define manpower for simulation
-                            boh = simpy.PreemptiveResource(env, capacity = j)
-                            foh = simpy.PreemptiveResource(env, capacity = k)
-                            oven = simpy.Resource(env, capacity=OVEN_CAPACITY)
-                            riders = simpy.PreemptiveResource(env, capacity = l)
-                            manager = simpy.PreemptiveResource(env, capacity = m)
+        # simulate the operation process by iterating all resources capacities
+        for j, k, l, m in itertools.product(range(1, BOH_MANPOWER_CAPACITY+1), range(1,FOH_MANPOWER_CAPACITY+1), range(1,RIDER_CAPACITY+1), range(1,MOD_CAPACITY+1)):
+            # Create simulation enviornment and define resources capacities
+            env = simpy.Environment()
+            i=0
+            # Define manpower for simulation
+            boh = simpy.PreemptiveResource(env, capacity = j)
+            foh = simpy.PreemptiveResource(env, capacity = k)
+            oven = simpy.Resource(env, capacity=OVEN_CAPACITY)
+            riders = simpy.PreemptiveResource(env, capacity = l)
+            manager = simpy.PreemptiveResource(env, capacity = m)
 
-                            # Define station resources for simulation
-                            make_table = simpy.Resource(env, capacity = MAKE_TABLE_CAPACITY)
-                            aux_table = simpy.Resource(env, capacity = AUX_TABLE_CAPACITY)
-                            dispatch_table = simpy.Resource(env, capacity = DISPATCH_TABLE_CAPACITY)
-                            cashier_counter = simpy.Resource(env, capacity = CASHIER_COUNTER_CAPACITY)
-                            bike_capacity = simpy.Resource(env, capacity = BIKE_CAPACITY)
+            # Define station resources for simulation
+            make_table = simpy.Resource(env, capacity = MAKE_TABLE_CAPACITY)
+            aux_table = simpy.Resource(env, capacity = AUX_TABLE_CAPACITY)
+            dispatch_table = simpy.Resource(env, capacity = DISPATCH_TABLE_CAPACITY)
+            cashier_counter = simpy.Resource(env, capacity = CASHIER_COUNTER_CAPACITY)
+            bike_capacity = simpy.Resource(env, capacity = BIKE_CAPACITY)
 
-                            # Define process for simulation
-                            env.process(generate_daily_routine(env,routine_df,ROUTINE_PRIORITY))
-                            env.process(new_order(env, boh,i, total_order, df_sample,foh,scenario,ORDER_PRIORITY))
-                            env.process(monitor_resources(env, riders, foh, manager,boh,scenario))
-                            env.process(monitor_equipment(env, cashier_counter, make_table, dispatch_table, bike_capacity,scenario))
-                            print('processing...',j,k,l,m)
+            # Define process for simulation
+            env.process(generate_daily_routine(env,routine_df,ROUTINE_PRIORITY))
+            env.process(new_order(env, boh,i, total_order, df_sample,foh,scenario,ORDER_PRIORITY))
+            env.process(monitor_resources(env, riders, foh, manager,boh,scenario))
+            env.process(monitor_equipment(env, cashier_counter, make_table, dispatch_table, bike_capacity,scenario))
+            print('processing...',j,k,l,m)
 
-                            # Run simulation from defined timeframe
-                            env.run(until=total_opening_hours)
-                            print('Simulation completed')
+            # Run simulation from defined timeframe
+            env.run(until=total_opening_hours)
+            print('Simulation completed')
 
-                            # Calculate total hours
-                            total_manhour = (j+k+l+m)*16
-                            TPMH = total_order / total_manhour
-                            SPMH = df_sample.bill_size.sum() / total_manhour
+            # Calculate total hours
+            total_manhour = (j+k+l+m)*16
+            TPMH = total_order / total_manhour
+            SPMH = df_sample.bill_size.sum() / total_manhour
 
-                            # Determine u14 hitrate
-                            u14_df = time_df.copy()
-                            u14_df['total_time'] = u14_df[['make_time','oven_time','dispatch_time']].sum(axis=1)
-                            fail_u14 = u14_df[u14_df['total_time']> 14]['total_time'].count()
-                            u14_hitrate = round(1-(fail_u14/total_order),2)
-                            u14_max = u14_df['total_time'].max()
+            # Determine u14 hitrate
+            u14_df = time_df.copy()
+            u14_df['total_time'] = u14_df[['make_time','oven_time','dispatch_time']].sum(axis=1)
+            fail_u14 = u14_df[u14_df['total_time']> 14]['total_time'].count()
+            u14_hitrate = round(1-(fail_u14/total_order),2)
+            u14_max = u14_df['total_time'].max()
 
-                            # Determine u17 hitrate
-                            u17_df = time_df.copy()
-                            u17_df['total_time'] = u17_df[['cashier_time','make_time','oven_time','dispatch_time']].sum(axis=1)
-                            fail_u17 = u17_df[u17_df['total_time']> 17]['total_time'].count()
-                            u17_hitrate = round(1-(fail_u17/total_order),2)
-                            u17_max = u17_df['total_time'].max()
+            # Determine u17 hitrate
+            u17_df = time_df.copy()
+            u17_df['total_time'] = u17_df[['cashier_time','make_time','oven_time','dispatch_time']].sum(axis=1)
+            fail_u17 = u17_df[u17_df['total_time']> 17]['total_time'].count()
+            u17_hitrate = round(1-(fail_u17/total_order),2)
+            u17_max = u17_df['total_time'].max()
 
-                            # Determine u30 hitrate
-                            deli_df = time_df[time_df['delivery_time']>0].drop('scenario',axis=1)
-                            total_deli_order = len(deli_df)
-                            deli_df['total_time'] = deli_df.sum(axis=1)
-                            pass_u30 = deli_df[deli_df['total_time'].sub(deli_df['delivery_return_time']) <= 30]['total_time'].count()
-                            print(pass_u30)
-                            u30_hitrate = round((pass_u30/total_deli_order),2)
-                            u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
+            # Determine u30 hitrate
+            deli_df = time_df[time_df['delivery_time']>0].drop('scenario',axis=1)
+            total_deli_order = len(deli_df)
+            deli_df['total_time'] = deli_df.sum(axis=1)
+            pass_u30 = deli_df[deli_df['total_time'].sub(deli_df['delivery_return_time']) <= 30]['total_time'].count()
+            print(pass_u30)
+            u30_hitrate = round((pass_u30/total_deli_order),2)
+            u30_max = deli_df['total_time'].sub(deli_df['delivery_return_time']).max()
 
-                            # Insert data to dataframe
-                            scenario_data = pd.DataFrame(
-                                [[scenario,j,k,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max,u17_hitrate,u17_max]],
-                                columns=['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max','u17 hitrate','u17 max']
-                            )
+            # Insert data to dataframe
+            scenario_data = pd.DataFrame(
+                [[scenario,j,k,l,m,TPMH,SPMH,u14_hitrate,u14_max,u30_hitrate,u30_max,u17_hitrate,u17_max]],
+                columns=['scenario','boh','foh','riders','mod','TPMH','SPMH','u14 hitrate','u14 max','u30 hitrate','u30 max','u17 hitrate','u17 max']
+            )
 
-                            scenario_kpi_df = scenario_kpi_df.append(scenario_data)
-                            u14_hitrate_target = 0.9
-                            u30_hitrate_target = 0.9
-                            u17_hitrate_target = 0.9
-                            scenario_kpi_df['u30 absolute var'] = scenario_kpi_df['u30 hitrate'] - u30_hitrate_target
-                            scenario_kpi_df['u14 absolute var'] = scenario_kpi_df['u14 hitrate'] - u14_hitrate_target
-                            scenario_kpi_df['u17 absolute var'] = scenario_kpi_df['u17 hitrate'] - u17_hitrate_target
-                            scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','u17 max','u17 absolute var','SPMH'], ascending=(True,True,True,True,True,True,False))
+            scenario_kpi_df = scenario_kpi_df.append(scenario_data)
+            u14_hitrate_target = 0.9
+            u30_hitrate_target = 0.9
+            u17_hitrate_target = 0.9
+            scenario_kpi_df['u30 absolute var'] = scenario_kpi_df['u30 hitrate'] - u30_hitrate_target
+            scenario_kpi_df['u14 absolute var'] = scenario_kpi_df['u14 hitrate'] - u14_hitrate_target
+            scenario_kpi_df['u17 absolute var'] = scenario_kpi_df['u17 hitrate'] - u17_hitrate_target
+            scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','u17 max','u17 absolute var','SPMH'], ascending=(True,True,True,True,True,True,False))
 
-                            # Add date & time to the time column of capacity_df dataframe
-                            start_datetime = datetime.datetime.combine(forecast_date, datetime.time(8,00))
-                            print(start_datetime)
-                            capacity_df['time'] = pd.to_timedelta(capacity_df['time'],unit='m')
-                            capacity_df['time'] = start_datetime + capacity_df['time']
-                            equipment_capacity_df['time'] = pd.to_timedelta(equipment_capacity_df['time'],unit='m')
-                            equipment_capacity_df['time'] = start_datetime + equipment_capacity_df['time']
+            # Add date & time to the time column of capacity_df dataframe
+            start_datetime = datetime.datetime.combine(forecast_date, datetime.time(8,00))
+            print(start_datetime)
+            capacity_df['time'] = pd.to_timedelta(capacity_df['time'],unit='m')
+            capacity_df['time'] = start_datetime + capacity_df['time']
+            equipment_capacity_df['time'] = pd.to_timedelta(equipment_capacity_df['time'],unit='m')
+            equipment_capacity_df['time'] = start_datetime + equipment_capacity_df['time']
 
-                            scenario_df = scenario_df.append(time_df)
-                            scenario_capacity_df = scenario_capacity_df.append(capacity_df)
-                            scenario_equipment_capacity_df = scenario_equipment_capacity_df.append(equipment_capacity_df)
-                            scenario_routine_df[scenario] = routine_time_df
-                            
-                            #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
-                            #    time_df_plot = px.area(time_df)
-                            #    st.plotly_chart(time_df_plot)
-                            # st.write(routine_time_df)
-                            scenario +=1
+            scenario_df = scenario_df.append(time_df)
+            scenario_capacity_df = scenario_capacity_df.append(capacity_df)
+            scenario_equipment_capacity_df = scenario_equipment_capacity_df.append(equipment_capacity_df)
+            scenario_routine_df[scenario] = routine_time_df
+            
+            #with st.beta_expander('SPMH: ' + round(scenario_data['SPMH'],0).to_string(index=False) + ' U14 Hit Rate: '+ round(scenario_data['u14 hitrate'],1).to_string(index=False)+ ' U30 Hit Rate: '+ round(scenario_data['u30 hitrate'],1).to_string(index=False)):
+            #    time_df_plot = px.area(time_df)
+            #    st.plotly_chart(time_df_plot)
+            # st.write(routine_time_df)
+            scenario +=1
         return scenario_df, scenario_kpi_df, scenario_capacity_df, scenario_routine_df, scenario_equipment_capacity_df
 
 
