@@ -32,6 +32,10 @@ import simpy
 np.random.seed(42)
 random.seed(42)
 
+# Setting firestore to store all the data
+# Authenticate to Firestore with the JSON account key.
+db = firestore.Client.from_service_account_json('col-optimization-firebase-adminsdk-vfyb2-f8efd6ca96.json')
+
 # Read Dataset
 @st.cache
 def read_file(store_code):
@@ -90,7 +94,7 @@ def resample_ta(resample, sales, tc):
     #all_channels_ta_df = remove_closing_hours(all_channels_ta_df)
     return all_channels_ta_df
 
-@st.cache()
+@st.cache(allow_output_mutation=True)
 def loop_simulation(simulation_df):
     df_sim_full = {}
     df_sim_sum = pd.DataFrame()
@@ -187,7 +191,7 @@ forecast_range = st.sidebar.date_input(
     'Select Forecast Range', value=(datetime.date.today(), datetime.date.today()))
 d1 = datetime.date.toordinal(forecast_range[0])
 d2 = datetime.date.toordinal(forecast_range[1])
-print(d1,d2)
+
 # If the date is the future date with no data, prophet will be used to forecast, otherwise, historical data will be used for process simulation
 for forecast_date in range(d1,d2):
     forecast_date = datetime.date.fromordinal(forecast_date)
@@ -441,13 +445,13 @@ for forecast_date in range(d1,d2):
                             routine_start_time = env.now
                             yield request
                             try:
-                                # print('getting {} to {}'.format(capacity_str[count],row['tasks']))
+                                #print('getting {} to {}'.format(capacity_str[count],row['tasks']))
                                 yield env.timeout(task_duration)
                                 routine_duration = env.now - routine_start_time
                                 routine_time_df.iloc[index][capacity_str[count]] = routine_duration
                                 done_in = 0
                             except simpy.Interrupt:
-                                # print('{} interrupted'.format(row['tasks']))
+                                #print('{} interrupted'.format(row['tasks']))
                                 done_in-= env.now - routine_start_time
                     break
 
@@ -716,7 +720,7 @@ for forecast_date in range(d1,d2):
                             print('Simulation completed')
 
                             # Calculate total hours
-                            total_manhour = (j+k+l+m)*16+8
+                            total_manhour = (j+k+l+m)*16
                             TPMH = total_order / total_manhour
                             SPMH = df_sample.bill_size.sum() / total_manhour
 
@@ -753,9 +757,9 @@ for forecast_date in range(d1,d2):
                             u14_hitrate_target = 0.9
                             u30_hitrate_target = 0.9
                             u17_hitrate_target = 0.9
-                            scenario_kpi_df['u30 absolute var'] = np.abs(scenario_kpi_df['u30 hitrate'] - u30_hitrate_target)
-                            scenario_kpi_df['u14 absolute var'] = np.abs(scenario_kpi_df['u14 hitrate'] - u14_hitrate_target)
-                            scenario_kpi_df['u17 absolute var'] = np.abs(scenario_kpi_df['u17 hitrate'] - u17_hitrate_target)
+                            scenario_kpi_df['u30 absolute var'] = scenario_kpi_df['u30 hitrate'] - u30_hitrate_target
+                            scenario_kpi_df['u14 absolute var'] = scenario_kpi_df['u14 hitrate'] - u14_hitrate_target
+                            scenario_kpi_df['u17 absolute var'] = scenario_kpi_df['u17 hitrate'] - u17_hitrate_target
                             scenario_kpi_df = scenario_kpi_df.sort_values(['u30 max','u30 absolute var','u14 max','u14 absolute var','u17 max','u17 absolute var','SPMH'], ascending=(True,True,True,True,True,True,False))
 
                             # Add date & time to the time column of capacity_df dataframe
@@ -787,11 +791,16 @@ for forecast_date in range(d1,d2):
 
     # Use minmax scaler to normalize all variable to determine the optimum capacity arrangement
     scaler = MinMaxScaler()
-    scenario_kpi_df[['u30 hitrate trans', 'u30 max trans', 'u14 hitrate trans', 'u14 max trans', 'SPMH trans', 'u30 abs var trans', 'u14 abs var trans', 'u17 hitrate trans', 'u17 max trans', 'u17 abs var trans']
-                    ] = scaler.fit_transform(scenario_kpi_df[['u30 hitrate', 'u30 max', 'u14 hitrate', 'u14 max', 'SPMH', 'u30 absolute var', 'u14 absolute var', 'u17 hitrate', 'u17 max', 'u17 absolute var']])
-    scenario_kpi_df[['optimum score']] = -scenario_kpi_df['u30 abs var trans']-scenario_kpi_df['u30 max trans'] - scenario_kpi_df['u14 abs var trans'] - \
-        scenario_kpi_df['u14 max trans'] - scenario_kpi_df['u17 abs var trans'] - \
-        scenario_kpi_df['u17 max trans'] + scenario_kpi_df['SPMH trans']*1.2
+    st.write(scenario_kpi_df)
+    spmh_factor = -0.00000005000 * total_sales + 2.5
+    u30_factor = total_sales / 8000000
+    st.write('spmh factor',spmh_factor)
+    scenario_kpi_df[['boh trans','foh trans','riders trans','u30 hitrate trans', 'u30 max trans', 'u14 hitrate trans', 'u14 max trans', 'SPMH trans', 'u30 abs var trans', 'u14 abs var trans', 'u17 hitrate trans', 'u17 max trans', 'u17 abs var trans']
+                    ] = scaler.fit_transform(scenario_kpi_df[['boh', 'foh', 'riders','u30 hitrate', 'u30 max', 'u14 hitrate', 'u14 max', 'SPMH', 'u30 absolute var', 'u14 absolute var', 'u17 hitrate', 'u17 max', 'u17 absolute var']])
+    scenario_kpi_df[['optimum score']] = u30_factor*scenario_kpi_df['u30 abs var trans'] + scenario_kpi_df['u14 abs var trans'] + \
+        scenario_kpi_df['u17 abs var trans'] + spmh_factor * scenario_kpi_df['SPMH trans'] - \
+        scenario_kpi_df['boh trans'] - scenario_kpi_df['foh trans'] - \
+        scenario_kpi_df['riders trans']
     scenario_kpi_df = scenario_kpi_df.sort_values('optimum score', ascending=False)
     scenario_kpi_df['classification'] = 'suboptimals'
     scenario_kpi_df.iloc[:3]['classification'] = 'optimums'
@@ -864,7 +873,7 @@ for forecast_date in range(d1,d2):
     st.plotly_chart(schedule_plt)
 
     model_MH = merged_schedule['hours'].sum()
-    final_MH = model_MH.sum() + 8
+    final_MH = model_MH.sum()
     projected_sales = sales_process_sim_df['bill_size'].sum()
     final_SPMH = round(projected_sales/final_MH,0)
 
@@ -872,10 +881,6 @@ for forecast_date in range(d1,d2):
     # Conclude the final SPMH and MH from optimal schedule
     st.write('Final SPMH based on roster: ', final_SPMH)
     st.write('Total hours arranged: ', final_MH)
-
-    # Setting firestore to store all the data
-    # Authenticate to Firestore with the JSON account key.
-    db = firestore.Client.from_service_account_json('col-optimization-firebase-adminsdk-vfyb2-f8efd6ca96.json')
 
     # Store simulation KPI to firestore
     file_name = f'{forecast_date}_{projected_sales}'
@@ -892,14 +897,15 @@ for forecast_date in range(d1,d2):
         'pickup_trans_percent': pickup_transaction_percent,
         'dinein_trans_percent': dinein_transaction_percent,
         'deli_trans_percent': delivery_transaction_percent,
-        'boh_hours': roster_df['boh'].sum().item(),
-        'foh_hours': roster_df['foh'].sum().item(),
-        'riders_hours': roster_df['riders'].sum().item(),
-        'mic_hours': roster_df['manager'].sum().item(),
+        'boh_hours': merged_schedule[merged_schedule['resource']=='boh']['hours'].sum().item(),
+        'foh_hours': merged_schedule[merged_schedule['resource'] == 'foh']['hours'].sum().item(),
+        'riders_hours': merged_schedule[merged_schedule['resource'] == 'riders']['hours'].sum().item(),
+        'mic_hours': merged_schedule[merged_schedule['resource'] == 'manager']['hours'].sum().item(),
         'u14_hitrate': optimal['u14 hitrate'].item(),
         'u30_hitrate': optimal['u30 hitrate'].item(),
         'u14_max': optimal['u14 max'].item(),
         'u30_max': optimal['u30 max'].item(),
         'u17_hitrate': optimal['u17 hitrate'].item(),
         'u17_max': optimal['u17 max'].item(),
+        'date': datetime.datetime.now()
     })
