@@ -116,19 +116,18 @@ def fit_model(df, resample, mode):
     m = Prophet(
         growth='linear',
         seasonality_mode=mode,
-        holidays=holidays,
         uncertainty_samples=100,
-        daily_seasonality=False
+        daily_seasonality=True
     )
     m.add_country_holidays(country_name='VN')
     if resample == 'H':
-        m.add_seasonality('sundays', period=1, prior_scale=10, fourier_order=15, mode=mode, condition_name='is_sunday')
-        m.add_seasonality('mondays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_monday')
-        m.add_seasonality('tuesdays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_tuesday')
-        m.add_seasonality('wednesdays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_wednesday')
-        m.add_seasonality('thursdays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_thursday')
-        m.add_seasonality('fridays', period=1, prior_scale=1.5, fourier_order=15, mode=mode, condition_name='is_friday')
-        m.add_seasonality('saturday', period=1, prior_scale=5, fourier_order=15, mode=mode, condition_name='is_saturday')
+        m.add_seasonality('sundays', period=1, prior_scale=10, fourier_order=2, mode=mode, condition_name='is_sunday')
+        m.add_seasonality('mondays', period=1, prior_scale=1.5, fourier_order=2, mode=mode, condition_name='is_monday')
+        m.add_seasonality('tuesdays', period=1, prior_scale=1.5, fourier_order=2, mode=mode, condition_name='is_tuesday')
+        m.add_seasonality('wednesdays', period=1, prior_scale=1.5, fourier_order=2, mode=mode, condition_name='is_wednesday')
+        m.add_seasonality('thursdays', period=1, prior_scale=1.5, fourier_order=2, mode=mode, condition_name='is_thursday')
+        m.add_seasonality('fridays', period=1, prior_scale=1.5, fourier_order=2, mode=mode, condition_name='is_friday')
+        m.add_seasonality('saturday', period=1, prior_scale=5, fourier_order=2, mode=mode, condition_name='is_saturday')
 
     df.columns = ['ds','y']
     df['ds'] = pd.to_datetime(df['ds'])

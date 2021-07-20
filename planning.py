@@ -193,7 +193,7 @@ d1 = datetime.date.toordinal(forecast_range[0])
 d2 = datetime.date.toordinal(forecast_range[1])
 
 # If the date is the future date with no data, prophet will be used to forecast, otherwise, historical data will be used for process simulation
-for forecast_date in range(d1,d2):
+for forecast_date in range(d1,d2+1):
     forecast_date = datetime.date.fromordinal(forecast_date)
     if forecast_date >= channels_split_df['Dinein - Sales'].index.max():
 
@@ -214,7 +214,7 @@ for forecast_date in range(d1,d2):
             df_transform = df_fit[['ds','y']]
 
             # Fit and predict using FB Prophet Model
-            fit_m = fit_model(df_transform, select_resample, 'multiplicative')
+            fit_m = fit_model(df_transform, select_resample, 'additive')
             pred_m = predict_model(fit_m, forecast_date , forecast_date + datetime.timedelta(days=1), select_resample)
 
             pred_m = pred_m.set_index('ds')
@@ -258,13 +258,12 @@ for forecast_date in range(d1,d2):
             dist_plot.add_trace(go.Histogram(x=df_fit['y']),row=1,col=1)
             dist_plot.add_trace(go.Histogram(x=df_fit['y_original']), row=2,col=1)
             st.plotly_chart(dist_plot, use_container_width=True)
-
+            pred_m = pred_m.reset_index()
             # Display fitting, tends, seasonalities
             fig1 = fit_m.plot(pred_m)
             st.write(fig1)
             fig2 = fit_m.plot_components(pred_m)
             st.write(fig2)
-            st.write(pred_m)
 
             def mape(actual, forecast):
                 mape = abs((actual-forecast)/forecast) * 100
@@ -284,7 +283,7 @@ for forecast_date in range(d1,d2):
 
         # Set simulation dataframe
         sales_process_sim_df = df_sim_full[0]
-        st.write(df_sim_full[0])
+        st.write('sales_process_sim_df',df_sim_full[0])
 
     else:
         # Use selected_store_df to preprocess ready for simulation_df
